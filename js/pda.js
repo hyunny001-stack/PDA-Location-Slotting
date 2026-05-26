@@ -397,12 +397,18 @@ async function handleStep3Scan(value) {
   render();
 }
 
-// ── 재시도 래퍼 ──
+// ── 재시도 래퍼 (5초 타임아웃 포함) ──
 async function withRetry(fn, retries = 3) {
+  const timeout = () => new Promise(r =>
+    setTimeout(() => r({ data: null, error: new Error('timeout') }), 5000)
+  );
   for (let i = 0; i < retries; i++) {
-    const result = await fn().catch(e => ({ data: null, error: e }));
+    const result = await Promise.race([
+      fn().catch(e => ({ data: null, error: e })),
+      timeout(),
+    ]);
     if (!result.error) return result;
-    if (i < retries - 1) await new Promise(r => setTimeout(r, 800 * (i + 1)));
+    if (i < retries - 1) await new Promise(r => setTimeout(r, 500));
   }
   return { data: null, error: new Error('네트워크 오류') };
 }

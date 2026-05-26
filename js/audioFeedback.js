@@ -8,18 +8,22 @@ export function playFailFeedback() {
   _playTone(220, 1.5, 'sawtooth');
 }
 
+let _ctx = null;
+
 function _playTone(freq, duration, type) {
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.type = type;
-    osc.frequency.value = freq;
-    gain.gain.setValueAtTime(0.8, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
-    osc.start();
-    osc.stop(ctx.currentTime + duration);
+    if (!_ctx) _ctx = new (window.AudioContext || window.webkitAudioContext)();
+    _ctx.resume().then(() => {
+      const osc = _ctx.createOscillator();
+      const gain = _ctx.createGain();
+      osc.connect(gain);
+      gain.connect(_ctx.destination);
+      osc.type = type;
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.8, _ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, _ctx.currentTime + duration);
+      osc.start();
+      osc.stop(_ctx.currentTime + duration);
+    });
   } catch (_) {}
 }

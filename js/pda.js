@@ -311,7 +311,7 @@ async function handleStep1Scan(rawValue) {
   ]);
 
   if (byFrom.error && byItem.error) {
-    showStep1Error(input, '네트워크 오류. 잠시 후 다시 스캔하세요.');
+    showStep1Error(input, '❌ 서버 연결 실패\n잠시 후 다시 스캔하세요');
     return;
   }
 
@@ -397,10 +397,10 @@ async function handleStep3Scan(value) {
   render();
 }
 
-// ── 재시도 래퍼 (5초 타임아웃 포함) ──
-async function withRetry(fn, retries = 3) {
+// ── 재시도 래퍼 (4초 타임아웃, 2회 재시도) ──
+async function withRetry(fn, retries = 2) {
   const timeout = () => new Promise(r =>
-    setTimeout(() => r({ data: null, error: new Error('timeout') }), 5000)
+    setTimeout(() => r({ data: null, error: new Error('timeout') }), 4000)
   );
   for (let i = 0; i < retries; i++) {
     const result = await Promise.race([
@@ -408,7 +408,7 @@ async function withRetry(fn, retries = 3) {
       timeout(),
     ]);
     if (!result.error) return result;
-    if (i < retries - 1) await new Promise(r => setTimeout(r, 500));
+    if (i < retries - 1) await new Promise(r => setTimeout(r, 300));
   }
   return { data: null, error: new Error('네트워크 오류') };
 }

@@ -291,7 +291,11 @@ function resetToStep1() {
 async function handleStep1Scan(rawValue) {
   const value = parseItemCode(rawValue); // QR에서 품번 추출
   const input = document.getElementById('scanInput');
-  if (input) input.disabled = true;
+  if (input) {
+    input.disabled = true;
+    input.placeholder = '⏳ 조회 중...';
+    input.value = '';
+  }
 
   const safe = value.replace(/[%_\\]/g, '\\$&');
 
@@ -334,12 +338,12 @@ async function handleStep1Scan(rawValue) {
 }
 
 function showStep1Error(input, msg) {
-  if (input) { input.disabled = false; input.value = ''; input.focus(); }
+  if (input) { input.disabled = false; input.placeholder = 'QR 스캔 대기 중...'; input.value = ''; input.focus(); }
   const banner = document.getElementById('errorBanner');
   if (!banner) return;
   banner.textContent = msg;
   banner.classList.add('visible');
-  setTimeout(() => banner.classList.remove('visible'), 4000);
+  setTimeout(() => banner.classList.remove('visible'), 7000);
 }
 
 // ── STEP 2 핸들러 ──

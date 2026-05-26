@@ -61,15 +61,16 @@ function _setScanInputVal(v) {
 // 예) ...91{111117158-0021MX} 920033 → "111117158-0021MX"
 // 예) ...91{110102-071018CE} 920016  → "110102-071018CE"
 function parseItemCode(raw) {
-  // GS1 QR: space = FNC1 구분자로 세그먼트 분리
-  // 하이픈 포함 세그먼트에서 하이픈 앞 마지막 '91' 기준으로 추출
-  for (const seg of raw.split(' ').reverse()) {
-    const dash = seg.indexOf('-');
+  // GS1 FNC1 구분자: ASCII 29(\x1d) 또는 공백 모두 허용
+  const normalized = raw.replace(/\x1d/g, ' ');
+  for (const seg of normalized.split(' ').reverse()) {
+    const clean = seg.trim();
+    const dash = clean.indexOf('-');
     if (dash === -1) continue;
-    const idx = seg.lastIndexOf('91', dash); // 하이픈 이전 마지막 '91'
-    if (idx !== -1) return seg.substring(idx + 2);
+    const idx = clean.lastIndexOf('91', dash);
+    if (idx !== -1) return clean.substring(idx + 2);
   }
-  return raw.trim();
+  return normalized.split(' ')[0].trim();
 }
 
 // ──────────────────────────────────────────
@@ -238,14 +239,23 @@ function bindScan(handler) {
 
   input.focus();
 
+  // Enter / Tab keystroke 감지
   input.addEventListener('keydown', e => {
     if (e.ctrlKey || e.altKey || e.metaKey) return;
     if (e.key === 'Enter' || e.key === 'Tab' || e.keyCode === 13 || e.keyCode === 9) {
       e.preventDefault();
-      const val = input.value.trim();
-      input.value = '';
-      if (val) handler(val);
+      submitScan(input, handler);
     }
+  });
+
+  // 폴백: 스캐너가 Enter를 keydown으로 보내지 않을 때
+  // input 이벤트 후 300ms 내 추가 입력 없으면 자동 제출
+  let _debounce = null;
+  input.addEventListener('input', () => {
+    clearTimeout(_debounce);
+    _debounce = setTimeout(() => {
+      if (input.value.trim()) submitScan(input, handler);
+    }, 300);
   });
 
   // 포커스 이탈 시 자동 복귀 (버튼 클릭 후 복귀 제외)
@@ -255,6 +265,12 @@ function bindScan(handler) {
       if (cur && !cur.disabled) cur.focus();
     }, 100);
   });
+}
+
+function submitScan(input, handler) {
+  const val = input.value.trim();
+  input.value = '';
+  if (val) handler(val);
 }
 
 // ── 초기화 ──

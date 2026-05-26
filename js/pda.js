@@ -1,5 +1,31 @@
-import { supabase } from './supabaseClient.js';
 import { playPassFeedback, playFailFeedback } from './audioFeedback.js';
+import { CONFIG } from './config.js';
+
+// ── Supabase 직접 fetch (CDN 의존성 제거, AbortController 타임아웃) ──
+async function sbFetch(path, options = {}) {
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), 5000);
+  try {
+    const res = await fetch(CONFIG.SUPABASE_URL + '/rest/v1/' + path, {
+      ...options,
+      headers: {
+        'apikey': CONFIG.SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + CONFIG.SUPABASE_ANON_KEY,
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(tid);
+    if (res.status === 204) return { data: [], error: null };
+    const data = await res.json();
+    if (!res.ok) return { data: null, error: new Error(data?.message || res.statusText) };
+    return { data, error: null };
+  } catch (e) {
+    clearTimeout(tid);
+    return { data: null, error: e };
+  }
+}
 
 // ── 상태 ──
 let state = {
@@ -299,15 +325,14 @@ async function handleStep1Scan(rawValue) {
 
   const safe = value.replace(/[%_\\]/g, '\\$&');
 
+  const enc = encodeURIComponent(safe);
   const [byFrom, byItem] = await Promise.all([
-    withRetry(() =>
-      supabase.from('item_mappings').select('*')
-        .ilike('from_location', safe).eq('status', 'active').limit(1)
-    ),
-    withRetry(() =>
-      supabase.from('item_mappings').select('*')
-        .ilike('item_code', safe).eq('status', 'active')
-    ),
+    withRetry(() => sbFetch(
+      `item_mappings?select=*&from_location=ilike.${enc}&status=eq.active&limit=1`
+    )),
+    withRetry(() => sbFetch(
+      `item_mappings?select=*&item_code=ilike.${enc}&status=eq.active`
+    )),
   ]);
 
   if (byFrom.error && byItem.error) {
@@ -373,14 +398,18 @@ async function handleStep3Scan(value) {
     loc => loc.toLowerCase() === value.toLowerCase()
   );
 
-  supabase.from('placement_logs').insert({
-    mapping_id:    mapping.id,
-    item_code:     mapping.item_code,
-    from_location: mapping.from_location,
-    scanned_to:    value,
-    to_display:    mapping.to_display,
-    result:        isPass ? 'pass' : 'fail',
-    pda_ua:        navigator.userAgent,
+  sbFetch('placement_logs', {
+    method: 'POST',
+    headers: { 'Prefer': 'return=minimal' },
+    body: JSON.stringify({
+      mapping_id:    mapping.id,
+      item_code:     mapping.item_code,
+      from_location: mapping.from_location,
+      scanned_to:    value,
+      to_display:    mapping.to_display,
+      result:        isPass ? 'pass' : 'fail',
+      pda_ua:        navigator.userAgent,
+    }),
   }).then(({ error }) => {
     if (error) console.warn('로그 저장 실패:', error.message);
   });

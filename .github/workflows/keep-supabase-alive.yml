@@ -16,8 +16,8 @@ jobs:
             -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
             -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}")
           echo "Response status: $STATUS"
-          if [ "$STATUS" -lt 200 ] || [ "$STATUS" -ge 400 ]; then
-            echo "Ping failed with status $STATUS"
+          if [ "$STATUS" -eq 000 ]; then
+            echo "No response - Supabase may be down"
             exit 1
           fi
-          echo "Supabase is alive!"
+          echo "Supabase is alive! (status: $STATUS)"

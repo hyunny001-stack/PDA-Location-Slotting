@@ -1,0 +1,484 @@
+# CLAUDE.md — PDA 로케이션 오적치 방지 시스템
+
+## 📌 프로젝트 개요
+
+**목적**: 창고 작업자가 품목을 잘못된 로케이션에 적치하는 오적치를 원천 차단
+**운영 방식**:
+1. 관리자가 PC 웹에서 3컬럼 Excel(품번·현재로케이션·이동로케이션)을 업로드
+2. 작업자가 PDA로 품번 QR 또는 From 로케이션 QR 스캔 → From→To 확인 → To 로케이션 QR 스캔
+3. 일치 시 PASS(녹색+단진동), 불일치 시 FAIL(빨강+경고음+장진동) → 정위치 스캔 전까지 차단
+
+**ERP 연동 없음** — 완전 독립 standalone 시스템
+**로그인 없음** — PDA는 URL 즐겨찾기 접속만으로 즉시 사용
+
+---
+
+## 🏗 아키텍처
+
+```
+[관리자 PC] → admin.html → Supabase DB
+                                ↓ LTE 실시간 조회
+[Keyence PDA (Android 최신)] → index.html (PWA)
+```
+
+- **DB**: Supabase (PostgreSQL) — 무료 티어
+- **배포**: GitHub Pages — 무료, HTTPS 자동
+- **PDA**: Keyence BT 시리즈 최신 Android 기종, Chrome 브라우저 접속
+
+---
+
+## 📁 파일 구조
+
+```
+/
+├── CLAUDE.md
+├── index.html              # PDA 작업자 화면 (메인)
+├── admin.html              # 관리자 매핑 관리 화면
+├── js/
+│   ├── config.js           # Supabase URL / anon key 환경 설정
+│   ├── supabaseClient.js   # Supabase 클라이언트 초기화
+│   ├── locationParser.js   # To 로케이션 범위 파싱 유틸 (From은 단일값이므로 To 전용)
+│   ├── audioFeedback.js    # 진동 + 부저음 처리
+│   ├── pda.js              # PDA 스캔 메인 로직
+│   └── admin.js            # 관리자 업로드/대시보드 로직
+└── css/
+    └── style.css           # PDA 최적화 스타일 (대형 터치 버튼)
+```
+
+---
+
+## 🗄 Supabase DB 스키마
+
+### 테이블 1: `item_mappings` (매핑 마스터)
+
+```sql
+CREATE TABLE item_mappings (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  item_code     TEXT NOT NULL,        -- 품번 (= QR 스캔값과 동일)
+  from_location TEXT NOT NULL,        -- 출발 로케이션 단일값 (행당 1개, 예: "aa-01-101")
+  to_locations  TEXT[] NOT NULL,      -- 도착 허용 배열 ["aa-01-109","aa-01-110","aa-01-111"]
+  to_display    TEXT NOT NULL,        -- To 화면 표시용 원본 입력값 (예: "aa-01-109~111")
+  status        TEXT DEFAULT 'active'
+                CHECK (status IN ('active','completed','cancelled')),
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ DEFAULT NOW(),
+
+  UNIQUE (item_code, from_location)   -- 품번+From 조합 유일
+);
+```
+
+### 테이블 2: `placement_logs` (이동 이력)
+
+```sql
+CREATE TABLE placement_logs (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  mapping_id      UUID REFERENCES item_mappings(id),
+  item_code       TEXT NOT NULL,
+  from_location   TEXT NOT NULL,       -- 작업자가 스캔한 From 로케이션
+  scanned_to      TEXT NOT NULL,       -- 작업자가 실제 스캔한 To 값
+  to_display      TEXT NOT NULL,       -- 기대값 표시용
+  result          TEXT NOT NULL
+                  CHECK (result IN ('pass','fail')),
+  pda_ua          TEXT,                -- User-Agent (단말기 식별)
+  logged_at       TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+### RLS 정책 (Row Level Security)
+
+```sql
+-- 읽기/쓰기 모두 anon 허용 (로그인 없는 시스템)
+ALTER TABLE item_mappings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE placement_logs ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "allow_all_item_mappings" ON item_mappings FOR ALL USING (true);
+CREATE POLICY "allow_all_placement_logs" ON placement_logs FOR ALL USING (true);
+```
+
+---
+
+## ⚙️ config.js 구조
+
+```javascript
+// js/config.js
+const CONFIG = {
+  SUPABASE_URL: 'YOUR_SUPABASE_URL',
+  SUPABASE_ANON_KEY: 'YOUR_ANON_KEY',
+};
+```
+
+> ⚠️ 실제 키는 GitHub에 올리기 전 `.gitignore` 또는 환경변수 처리 필수
+
+---
+
+## 📋 관리자 업로드 Excel 포맷
+
+### 컬럼 구성 (3개 — 최소화)
+
+| 열 | 컬럼명 | 필수 | 설명 |
+|----|--------|------|------|
+| **A** | `품번` | ✅ | 품번 (PDA QR 스캔값과 정확히 일치해야 함) |
+| **B** | `현재 로케이션` | ✅ | From 단일 로케이션값 (행당 1개) |
+| **C** | `이동 로케이션` | ✅ | To 단일값 또는 범위 (예: aa-01-109~111) |
+
+### 실제 입력 예시
+
+| 품번 | 현재 로케이션 | 이동 로케이션 |
+|------|-------------|-------------|
+| A | aa-01-101 | aa-01-109~111 |
+| A | aa-01-102 | aa-01-109~111 |
+| A | aa-01-103 | aa-01-109~111 |
+| A | aa-01-104 | aa-01-109~111 |
+| A | aa-01-105 | aa-01-109~111 |
+| B | aa-01-106 | aa-01-112 |
+| B | aa-01-107 | aa-01-113 |
+| B | aa-01-108 | aa-01-114 |
+
+### C열 이동 로케이션 입력 규칙
+
+| 형식 | 입력 예 | 파싱 결과 |
+|------|---------|---------|
+| 단일값 | `aa-01-112` | `["aa-01-112"]` |
+| 연속 범위 | `aa-01-109~111` | `["aa-01-109","aa-01-110","aa-01-111"]` |
+| 비연속 개별 | `aa-01-109, aa-01-111` | `["aa-01-109","aa-01-111"]` |
+| 혼합 | `aa-01-109~110, aa-01-115` | `["aa-01-109","aa-01-110","aa-01-115"]` |
+
+> **B열 현재 로케이션**: 반드시 단일값 (행당 1개 로케이션)
+> **같은 품번 여러 행**: 품번 A처럼 From이 5개면 5행으로 입력
+
+---
+
+## 📐 핵심 로직 명세
+
+### 1. To 로케이션 파싱 (`locationParser.js`)
+
+From은 단일값이므로 파싱 불필요. To 전용으로 사용.
+
+**범위 파싱 규칙:**
+- 접두사(문자+하이픈) + 숫자 분리: `aa-01-109~111` → 접두사 `aa-01-`, 범위 `109~111`
+- 쉼표로 1차 분리 → 각 세그먼트 `~` 포함 여부 판단
+- 숫자 패딩 유지 (109 → 109, 001 → 001)
+- 대소문자 구분 없음 (내부 처리 시 toLowerCase 통일)
+
+```javascript
+// 예시: "aa-01-109~111" → ["aa-01-109","aa-01-110","aa-01-111"]
+// 예시: "aa-01-112"     → ["aa-01-112"]
+function parseLocations(input) {
+  const result = [];
+  const segments = input.split(',').map(s => s.trim());
+  segments.forEach(seg => {
+    if (seg.includes('~')) {
+      const parts = seg.split('~');
+      const startStr = parts[0].trim();
+      const endNum  = parseInt(parts[1].trim());
+      // 접두사: 마지막 하이픈까지
+      const lastDash = startStr.lastIndexOf('-');
+      const prefix   = startStr.substring(0, lastDash + 1); // "aa-01-"
+      const startNum = parseInt(startStr.substring(lastDash + 1));
+      const pad      = startStr.substring(lastDash + 1).length;
+      for (let i = startNum; i <= endNum; i++) {
+        result.push(prefix + String(i).padStart(pad, '0'));
+      }
+    } else {
+      result.push(seg);
+    }
+  });
+  return result;
+}
+```
+
+### 2. PDA 스캔 플로우 (`pda.js`)
+
+**작업자는 품번 QR 또는 From 로케이션 QR 중 어느 것을 먼저 찍어도 됨**
+
+```
+[STEP 1] 첫 QR 스캔 (품번 OR From 로케이션)
+
+  → 스캔값으로 두 가지 DB 조회 병렬 시도:
+
+    (A) item_code = 스캔값 조회 성공  → 품번 QR로 판단
+          해당 품번의 from_location 목록 전체 표시
+          "픽업 로케이션 QR을 스캔하세요" 안내
+          → STEP 2 진입
+
+    (B) from_location = 스캔값 조회 성공  → From 로케이션 QR로 판단
+          해당 행 즉시 특정 → FROM→TO 화면 표시
+          → STEP 3 직행 (STEP 2 건너뜀)
+
+    (C) 둘 다 없음  → "매핑 정보 없음. 관리자에게 문의하세요" 안내, 재스캔 대기
+
+[STEP 2] From 로케이션 QR 스캔 (품번 QR로 진입한 경우만)
+
+  → 스캔값이 해당 품번의 from_location 목록 중 하나인지 검사
+    ├── 불일치 (FAIL) → FAIL 피드백 + 재스캔 대기
+    └── 일치 (PASS)   → 해당 행 특정 → FROM→TO 화면 표시 → STEP 3 진입
+
+[STEP 3] To 로케이션 QR 스캔
+
+  → 스캔값이 to_locations 배열에 포함되는지 검사
+    ├── 미포함 (FAIL) → FAIL 화면 + 피드백
+                        + placement_logs 저장(result='fail') + 재스캔 대기
+    └── 포함 (PASS)   → PASS 화면 + 피드백
+                        + placement_logs 저장(result='pass') → 완료
+```
+
+**중요 규칙**:
+- STEP 2·3 FAIL 시 해당 스텝 재스캔, 다음 단계 진입 차단
+- `[← 처음부터]` 버튼으로 STEP 1 복귀 항상 가능
+
+### 3. 진동 + 부저음 (`audioFeedback.js`)
+
+```javascript
+// PASS 피드백
+function passSignal() {
+  navigator.vibrate?.(200);
+  playTone(880, 0.3, 'sine');        // 맑은 고음 0.3초
+}
+
+// FAIL 피드백
+function failSignal() {
+  navigator.vibrate?.([400, 200, 400, 200, 400]);
+  playTone(220, 1.5, 'sawtooth');    // 낮은 경고음 1.5초
+}
+
+function playTone(freq, duration, type = 'sine') {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.type = type;
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(0.8, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+  osc.start();
+  osc.stop(ctx.currentTime + duration);
+}
+```
+
+> ⚠️ Keyence PDA에서 `navigator.vibrate()` 미작동 확인 시: 부저음 볼륨 최대화 + 화면 플래시로 대체
+
+---
+
+## 🖥 화면 명세
+
+### index.html — PDA 작업자 화면
+
+**전체 컨셉**: 글자 크기 최소 24px. 버튼 최소 60px 높이. 한 손 조작 최적화.
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━
+[STEP 1] 첫 스캔 화면   배경: #1e40af
+━━━━━━━━━━━━━━━━━━━━━━━━
+  ● ○ ○   STEP 1
+
+  품번 또는 로케이션 QR을
+  스캔하세요
+
+  [                      ]  ← 자동 포커스
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+[STEP 2] 품번 스캔 후 화면   배경: #1e40af
+(From 로케이션 스캔 대기)
+━━━━━━━━━━━━━━━━━━━━━━━━
+  ● ● ○   STEP 2   품번: A
+
+  📍 픽업 대상 로케이션:
+  ┌──────────────────────┐
+  │ • aa-01-101          │
+  │ • aa-01-102          │
+  │ • aa-01-103          │
+  │ • aa-01-104          │
+  │ • aa-01-105          │
+  └──────────────────────┘
+  해당 로케이션 QR을 스캔하세요
+  [                      ]
+
+  [← 처음부터]
+━━━━━━━━━━━━━━━━━━━━━━━━
+[STEP 3] FROM→TO 확인 화면   배경: #1e40af
+(From 특정 완료, To 스캔 대기)
+━━━━━━━━━━━━━━━━━━━━━━━━
+  ● ● ●   STEP 3   품번: A
+
+  ┌──────────┐    ┌─────────────────┐
+  │  FROM    │ →  │  TO             │
+  │aa-01-102 │    │ aa-01-109       │
+  └──────────┘    │ aa-01-110       │
+                  │ aa-01-111       │
+                  └─────────────────┘
+
+  이동 로케이션 QR을 스캔하세요
+  [                      ]
+
+  [← 처음부터]
+━━━━━━━━━━━━━━━━━━━━━━━━
+[PASS 화면]   배경: #22c55e
+━━━━━━━━━━━━━━━━━━━━━━━━
+  ✅  적치 완료!
+
+  aa-01-102 → aa-01-110
+
+  [다음 작업 →]
+━━━━━━━━━━━━━━━━━━━━━━━━
+[STEP 2 FAIL 화면]   배경: #ef4444
+━━━━━━━━━━━━━━━━━━━━━━━━
+  🚫  픽업 위치 불일치!
+
+  품번 A의 로케이션이 아닙니다
+  스캔됨: aa-01-199
+
+  올바른 로케이션 QR을 스캔하세요
+  [                      ]
+━━━━━━━━━━━━━━━━━━━━━━━━
+[STEP 3 FAIL 화면]   배경: #ef4444
+━━━━━━━━━━━━━━━━━━━━━━━━
+  🚫  잘못된 적치 위치!
+
+  정위치: aa-01-109~111
+  스캔됨: aa-01-115
+
+  올바른 로케이션 QR을 스캔하세요
+  [                      ]
+━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+> **From 로케이션 QR로 진입 시**: STEP 2 없이 STEP 3 화면으로 직행
+> 단, 화면 상단 진행 표시는 `● ● ●`로 동일하게 표시
+
+### admin.html — 관리자 화면
+
+**탭 구조**: [매핑 등록] | [현황 대시보드]
+
+**[매핑 등록 탭]**
+```
+① [📥 Excel 템플릿 다운로드]
+   → SheetJS로 3컬럼 양식 xlsx 생성 다운로드
+   → 헤더: 품번 / 현재 로케이션 / 이동 로케이션
+
+② 파일 업로드 영역 (드래그&드롭 or 클릭)
+   → SheetJS 파싱 → 미리보기 테이블 표시
+
+③ 미리보기 테이블:
+   | 품번 | 현재 로케이션 | 이동 로케이션(파싱결과)          | 상태 |
+   | A    | aa-01-101    | aa-01-109, aa-01-110, aa-01-111 | ✅   |
+   | B    | aa-01-106    | aa-01-112                       | ✅   |
+   | B    | (누락)       | aa-01-113                       | ⚠️  |
+   → 오류 행 빨강, [전체 저장] 비활성화
+
+④ [전체 저장] → Supabase upsert (onConflict: 'item_code, from_location')
+```
+
+**[현황 대시보드 탭]**
+```
+필터: [전체 ▼] [active ▼] [completed ▼]    [🔄 새로고침]
+
+| 품번 | 현재 로케이션 | 이동 로케이션    | 상태   | PASS | FAIL | 등록일 | 조작         |
+|------|-------------|----------------|--------|------|------|--------|------------|
+| A    | aa-01-101   | aa-01-109~111  | active |  3   |  1   | 05-22  | [완료][취소] |
+| B    | aa-01-106   | aa-01-112      | active |  1   |  0   | 05-22  | [완료][취소] |
+```
+
+---
+
+## 📊 Excel 파싱 검증 규칙 (`admin.js`)
+
+오류가 1개라도 있으면 [전체 저장] 비활성화:
+
+| 검증 항목 | 오류 메시지 |
+|----------|-----------|
+| 품번 비어있음 | "품번 누락" |
+| 현재 로케이션 비어있음 | "현재 로케이션 누락" |
+| 이동 로케이션 비어있음 | "이동 로케이션 누락" |
+| 이동 로케이션 파싱 결과 빈 배열 | "이동 로케이션 파싱 실패" |
+| 범위에서 시작 > 끝 숫자 | "범위 오류 (시작이 끝보다 큼)" |
+| (품번 + 현재 로케이션) 중복 행 | "중복된 품번+로케이션 조합" |
+
+---
+
+## 📱 PWA 설정 (index.html)
+
+```html
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+```
+
+> Service Worker 미구현 (LTE 상시 연결 환경으로 오프라인 불필요)
+
+---
+
+## 🎨 스타일 가이드 (`style.css`)
+
+| 항목 | 값 |
+|------|---|
+| 기본 폰트 | `system-ui, -apple-system, sans-serif` |
+| 기본 글자 크기 | `20px` (PDA 가독성) |
+| 버튼 최소 높이 | `60px` |
+| 터치 영역 최소 | `44px × 44px` |
+| PASS 배경 | `#22c55e` |
+| FAIL 배경 | `#ef4444` |
+| 대기/안내 배경 | `#1e40af` |
+| 텍스트 (PASS/FAIL) | `white`, `bold` |
+| FROM→TO 박스 | `border: 2px solid white`, `border-radius: 8px` |
+
+---
+
+## ⚠️ 알려진 리스크 및 대응
+
+| 리스크 | 상황 | 대응 |
+|--------|------|------|
+| Keyence 진동 미작동 | `navigator.vibrate()` 무반응 | FAIL 음 볼륨 최대화 + 화면 플래시 강화 |
+| 스캔 Enter 미수신 | PDA 스캐너 설정 문제 | Tab키 대체 감지 추가 (`keyCode 9`) |
+| LTE 단절 | 서버 조회 실패 | "네트워크 오류. 재시도 중..." + 자동 retry 3회 |
+| 품번·로케이션 동시 조회 충돌 | 스캔값이 양쪽에 존재 | from_location 우선 판단 (더 구체적이므로) |
+| 중복 등록 | 동일 (품번+From) 재업로드 | upsert 덮어쓰기 처리 |
+
+---
+
+## 🚀 개발 순서 (권장)
+
+```
+Phase 1: 기반 세팅
+  1. Supabase 프로젝트 생성 + SQL 스키마 실행
+  2. config.js 작성 (URL/KEY 입력)
+  3. supabaseClient.js 초기화 확인
+
+Phase 2: 관리자 기능
+  4. locationParser.js 작성 + 콘솔 파싱 테스트
+  5. admin.html — 3컬럼 템플릿 다운로드 기능
+  6. admin.html — Excel 업로드 + 파싱 미리보기 + 검증
+  7. admin.html — Supabase upsert 저장
+  8. admin.html — 현황 대시보드 (PASS/FAIL 집계 포함)
+
+Phase 3: PDA 기능
+  9.  audioFeedback.js 작성
+  10. index.html — STEP 1 스캔 + 품번/From 로케이션 이중 조회
+  11. index.html — STEP 2 From 로케이션 목록 표시 + 스캔 검증
+  12. index.html — STEP 3 FROM→TO 화면 + To 스캔 + PASS/FAIL 판정
+  13. index.html — 피드백 (진동/부저) + 로그 저장 + 스텝 진행 표시
+
+Phase 4: 검증
+  14. 데스크탑 브라우저로 전체 플로우 테스트
+  15. Keyence PDA 현장 테스트 (진동/부저 작동 여부 확인)
+  16. 미작동 항목 대체 로직 적용
+```
+
+---
+
+## 📝 테스트 시나리오
+
+| 시나리오 | 기대 결과 |
+|----------|---------|
+| 품번 QR 스캔 → 품번 A | STEP 2 진입, From 5개 목록 표시 |
+| 품번 A 후 From 로케이션 aa-01-102 스캔 | STEP 3 진입, FROM→TO 화면 표시 |
+| 품번 A 후 From 범위 외 aa-01-199 스캔 | STEP 2 FAIL + 재스캔 유도 |
+| From 로케이션 QR aa-01-106 직접 스캔 | STEP 3 직행, FROM→TO 표시 (aa-01-106 → aa-01-112) |
+| From 로케이션 직접 스캔 후 To aa-01-112 스캔 | PASS + "aa-01-106 → aa-01-112" |
+| From 로케이션 직접 스캔 후 To aa-01-115 스캔 | FAIL + 재스캔 유도 |
+| 범위 To (aa-01-109~111) 중 aa-01-110 스캔 | PASS |
+| 단일 To (aa-01-112) 에 aa-01-112 스캔 | PASS |
+| 매핑 미등록 QR 스캔 | "매핑 없음" 안내 |
+| Excel — 품번 누락 행 포함 | ⚠️ 오류, 저장 차단 |
+| Excel — 중복 (품번+From) 행 포함 | ⚠️ 오류, 저장 차단 |
+| Excel — 정상 파일 업로드 | 미리보기 ✅, 저장 후 PDA 즉시 반영 |

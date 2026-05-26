@@ -1,0 +1,204 @@
+/* PDA 작업자 화면 전용 스타일 */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 20px;
+  background: #1e40af;
+  color: white;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body.status-pass { background: #22c55e; }
+body.status-fail { background: #ef4444; }
+
+/* ── 앱 레이아웃 ── */
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding: 16px;
+  gap: 16px;
+}
+
+/* ── 헤더 ── */
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 16px;
+  opacity: 0.9;
+}
+
+.step-dots {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.dot {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.dot.active { background: white; }
+
+.step-label { font-weight: bold; font-size: 15px; }
+
+/* ── 안내 텍스트 ── */
+.guide-text {
+  font-size: 24px;
+  font-weight: bold;
+  line-height: 1.4;
+}
+
+.sub-text {
+  font-size: 17px;
+  opacity: 0.85;
+  line-height: 1.5;
+}
+
+/* ── 스캔 입력 ── */
+.scan-input {
+  width: 100%;
+  font-size: 22px;
+  padding: 18px 16px;
+  border: 2.5px solid rgba(255, 255, 255, 0.8);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+  outline: none;
+  caret-color: white;
+}
+
+.scan-input::placeholder {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 18px;
+}
+
+.scan-input:focus {
+  border-color: white;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* ── 로케이션 목록 ── */
+.location-list {
+  border: 2px solid rgba(255, 255, 255, 0.8);
+  border-radius: 10px;
+  padding: 14px 18px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 22px;
+  font-weight: bold;
+  max-height: 45vh;
+  overflow-y: auto;
+}
+
+.location-list li::before { content: '• '; }
+
+/* ── FROM → TO 박스 ── */
+.from-to {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.arrow {
+  font-size: 30px;
+  padding-top: 12px;
+  flex-shrink: 0;
+}
+
+.location-box {
+  border: 2px solid white;
+  border-radius: 10px;
+  padding: 14px 18px;
+  font-size: 22px;
+  font-weight: bold;
+  line-height: 1.5;
+}
+
+.from-box { flex-shrink: 0; }
+.to-box   { flex: 1; max-height: 40vh; overflow-y: auto; }
+
+/* ── 결과 화면 ── */
+.result-icon {
+  font-size: 56px;
+  text-align: center;
+}
+
+.result-detail {
+  font-size: 22px;
+  font-weight: bold;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.fail-detail {
+  font-size: 18px;
+  text-align: center;
+  opacity: 0.9;
+  line-height: 1.6;
+}
+
+/* ── 버튼 ── */
+.btn-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 24px;
+  min-height: 60px;
+  min-width: 44px;
+  font-size: 18px;
+  font-weight: bold;
+  border: 2px solid rgba(255, 255, 255, 0.8);
+  border-radius: 10px;
+  background: transparent;
+  color: white;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.btn-next {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 20px;
+  min-height: 64px;
+  font-size: 22px;
+  font-weight: bold;
+  border: none;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.25);
+  color: white;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+/* ── 네트워크 오류 배너 ── */
+.error-banner {
+  display: none;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 16px;
+  text-align: center;
+}
+
+.error-banner.visible { display: block; }
+
+/* ── 스페이서 ── */
+.spacer { flex: 1; }

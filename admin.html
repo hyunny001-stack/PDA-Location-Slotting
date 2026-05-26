@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>관리자 — 로케이션 매핑</title>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 15px;
+      background: #f1f5f9;
+      color: #1e293b;
+      min-height: 100vh;
+    }
+
+    /* ── 헤더 ── */
+    .admin-header {
+      background: #1e40af;
+      color: white;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 32px;
+    }
+    .admin-header h1 { font-size: 20px; font-weight: 700; }
+
+    .tab-nav { display: flex; gap: 4px; }
+    .tab-btn {
+      padding: 8px 20px;
+      border: none;
+      border-radius: 6px 6px 0 0;
+      background: rgba(255,255,255,0.2);
+      color: white;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .tab-btn.active { background: white; color: #1e40af; }
+
+    /* ── 본문 ── */
+    main { padding: 24px; max-width: 1100px; margin: 0 auto; }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── 카드 ── */
+    .card {
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      padding: 20px 24px;
+      margin-bottom: 20px;
+    }
+    .card-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #334155;
+      margin-bottom: 14px;
+    }
+
+    /* ── 버튼 ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 9px 18px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      background: #e2e8f0;
+      color: #334155;
+    }
+    .btn:hover { background: #cbd5e1; }
+    .btn-primary {
+      background: #1e40af;
+      color: white;
+    }
+    .btn-primary:hover { background: #1e3a8a; }
+    .btn-primary:disabled {
+      background: #94a3b8;
+      cursor: not-allowed;
+    }
+
+    /* ── 드롭존 ── */
+    .dropzone {
+      border: 2px dashed #94a3b8;
+      border-radius: 8px;
+      padding: 40px 24px;
+      text-align: center;
+      color: #64748b;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      margin-top: 14px;
+    }
+    .dropzone:hover, .dropzone.drag-over {
+      border-color: #1e40af;
+      background: #eff6ff;
+      color: #1e40af;
+    }
+    .dropzone p { font-size: 15px; }
+    .dropzone small { font-size: 13px; margin-top: 6px; display: block; opacity: 0.7; }
+
+    /* ── 미리보기 테이블 ── */
+    .preview-table, .dashboard-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    .preview-table th, .dashboard-table th {
+      background: #f8fafc;
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 2px solid #e2e8f0;
+      font-weight: 600;
+      color: #475569;
+      white-space: nowrap;
+    }
+    .preview-table td, .dashboard-table td {
+      padding: 9px 12px;
+      border-bottom: 1px solid #f1f5f9;
+      vertical-align: middle;
+    }
+    .preview-table tr:last-child td, .dashboard-table tr:last-child td { border-bottom: none; }
+    .row-error { background: #fef2f2; }
+    .row-error td { color: #b91c1c; }
+
+    /* ── 저장 바 ── */
+    .save-bar {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-top: 16px;
+    }
+    .feedback { font-size: 14px; font-weight: 600; }
+    .feedback.success { color: #16a34a; }
+    .feedback.error   { color: #dc2626; }
+
+    /* ── 대시보드 컨트롤 ── */
+    .dashboard-controls {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    select {
+      padding: 8px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 14px;
+      background: white;
+      color: #334155;
+    }
+
+    /* ── 배지 ── */
+    .badge {
+      display: inline-block;
+      padding: 3px 9px;
+      border-radius: 99px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .badge-active    { background: #dbeafe; color: #1d4ed8; }
+    .badge-completed { background: #dcfce7; color: #15803d; }
+    .badge-cancelled { background: #f1f5f9; color: #64748b; }
+
+    .num { text-align: center; font-weight: 700; }
+    .pass-num { color: #16a34a; }
+    .fail-num  { color: #dc2626; }
+
+    .action-cell { white-space: nowrap; }
+
+    .btn-sm {
+      padding: 5px 10px;
+      border: none;
+      border-radius: 5px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-right: 4px;
+    }
+    .btn-complete { background: #dbeafe; color: #1d4ed8; }
+    .btn-complete:hover { background: #bfdbfe; }
+    .btn-cancel { background: #f1f5f9; color: #64748b; }
+    .btn-cancel:hover { background: #e2e8f0; }
+
+    .loading-cell {
+      text-align: center;
+      color: #94a3b8;
+      padding: 32px;
+    }
+  </style>
+</head>
+<body>
+
+<header class="admin-header">
+  <h1>로케이션 매핑 관리</h1>
+  <nav class="tab-nav">
+    <button class="tab-btn active" data-tab="upload">매핑 등록</button>
+    <button class="tab-btn" data-tab="dashboard">현황 대시보드</button>
+  </nav>
+</header>
+
+<main>
+
+  <!-- ── 매핑 등록 탭 ── -->
+  <section id="upload" class="tab-panel active">
+
+    <div class="card">
+      <div class="card-title">① Excel 템플릿 다운로드</div>
+      <button id="templateBtn" class="btn">📥 Excel 템플릿 다운로드</button>
+      <p style="margin-top:10px; font-size:13px; color:#64748b;">
+        컬럼 구성: 품번 / 현재 로케이션 / 이동 로케이션<br>
+        이동 로케이션 범위 예시: <code>aa-01-109~111</code> → aa-01-109, aa-01-110, aa-01-111
+      </p>
+    </div>
+
+    <div class="card">
+      <div class="card-title">② Excel 파일 업로드</div>
+      <div id="dropzone" class="dropzone">
+        <p>📂 Excel 파일을 드래그하거나 클릭하여 업로드</p>
+        <small>.xlsx / .xls 지원</small>
+        <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none">
+      </div>
+    </div>
+
+    <div class="card" id="previewSection" style="display:none">
+      <div class="card-title">③ 미리보기 및 저장</div>
+      <div style="overflow-x:auto">
+        <table class="preview-table">
+          <thead>
+            <tr>
+              <th>품번</th>
+              <th>현재 로케이션</th>
+              <th>이동 로케이션 (파싱 결과)</th>
+              <th>상태</th>
+            </tr>
+          </thead>
+          <tbody id="previewBody"></tbody>
+        </table>
+      </div>
+      <div class="save-bar">
+        <button id="saveBtn" class="btn btn-primary" disabled>전체 저장</button>
+        <span id="saveFeedback" class="feedback"></span>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ── 현황 대시보드 탭 ── -->
+  <section id="dashboard" class="tab-panel">
+
+    <div class="card">
+      <div class="dashboard-controls">
+        <select id="statusFilter">
+          <option value="all">전체</option>
+          <option value="active">active</option>
+          <option value="completed">completed</option>
+          <option value="cancelled">cancelled</option>
+        </select>
+        <button id="refreshBtn" class="btn">🔄 새로고침</button>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="dashboard-table">
+          <thead>
+            <tr>
+              <th>품번</th>
+              <th>현재 로케이션</th>
+              <th>이동 로케이션</th>
+              <th>상태</th>
+              <th>PASS</th>
+              <th>FAIL</th>
+              <th>등록일</th>
+              <th>조작</th>
+            </tr>
+          </thead>
+          <tbody id="dashboardBody">
+            <tr><td colspan="8" class="loading-cell">대시보드 탭을 클릭하면 로드됩니다</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </section>
+
+</main>
+
+<script type="module" src="js/admin.js"></script>
+</body>
+</html>

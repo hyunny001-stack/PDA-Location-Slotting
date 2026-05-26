@@ -3,19 +3,79 @@ import { playPassFeedback, playFailFeedback } from './audioFeedback.js';
 
 // ── 상태 ──
 let state = {
-  screen: 'STEP1',        // STEP1 | STEP2 | STEP2_FAIL | STEP3 | STEP3_FAIL | PASS
-  scannedItemCode: null,  // 품번 QR로 진입했을 때의 품번값
-  allFromMappings: [],    // 품번에 속한 active 매핑 전체
-  currentMapping: null,   // 특정된 매핑 행
-  passResult: null,       // { from, to } — PASS 화면 표시용
-  step2FailScan: null,    // STEP2 FAIL 시 스캔됐던 값
-  step3FailScan: null,    // STEP3 FAIL 시 스캔됐던 값
+  screen: 'STEP1',
+  scannedItemCode: null,
+  allFromMappings: [],
+  currentMapping: null,
+  passResult: null,
+  step2FailScan: null,
+  step3FailScan: null,
 };
 
+// ── 현재 스텝 핸들러 (화면별로 교체) ──
+let _stepHandler = null;
+
+// ──────────────────────────────────────────
+// 전역 스캔 캡처 (포커스 없어도 동작)
+// ──────────────────────────────────────────
+
+// (1) 화면 터치 → 입력창 자동 포커스 (PDA 초기 진입 대응)
+document.addEventListener('touchstart', () => {
+  const input = document.getElementById('scanInput');
+  if (input && !input.disabled) input.focus();
+}, { passive: true });
+
+// (2) 입력창 포커스 없을 때 문서 레벨에서 스캐너 입력 캡처
+let _gBuf = '';
+let _gTimer = null;
+document.addEventListener('keydown', e => {
+  if (document.activeElement?.id === 'scanInput') return; // 포커스 있으면 bindScan이 담당
+  if (!_stepHandler) return;
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+
+  if (e.key === 'Enter' || e.key === 'Tab' || e.keyCode === 13 || e.keyCode === 9) {
+    e.preventDefault();
+    const val = _gBuf.trim();
+    _gBuf = '';
+    clearTimeout(_gTimer);
+    if (val) { _setScanInputVal(''); _stepHandler(val); }
+    return;
+  }
+  if (e.key.length === 1) {
+    _gBuf += e.key;
+    clearTimeout(_gTimer);
+    _gTimer = setTimeout(() => { _gBuf = ''; _setScanInputVal(''); }, 500);
+    _setScanInputVal(_gBuf);
+  }
+});
+
+function _setScanInputVal(v) {
+  const el = document.getElementById('scanInput');
+  if (el) el.value = v;
+}
+
+// ──────────────────────────────────────────
+// QR 품번 추출 함수
+// ──────────────────────────────────────────
+// 제품 QR 원본값을 보고 이 함수를 수정하세요.
+// 현재: 원본값 그대로 반환 (passthrough)
+//
+// 예시 포맷별 수정 방법:
+//   URL 마지막 경로  → return raw.split('/').pop().split('?')[0].trim();
+//   파이프 첫 번째   → return raw.split('|')[0].trim();
+//   쉼표 첫 번째     → return raw.split(',')[0].trim();
+//   고정 접두사 제거 → return raw.replace(/^ITEM:/i, '').trim();
+function parseItemCode(raw) {
+  return raw.trim();
+}
+
+// ──────────────────────────────────────────
+// 렌더러
+// ──────────────────────────────────────────
 const app = document.getElementById('app');
 
-// ── 렌더러 ──
 function render() {
+  _stepHandler = null;
   document.body.className = '';
   switch (state.screen) {
     case 'STEP1':      renderStep1();      break;
@@ -25,6 +85,13 @@ function render() {
     case 'STEP3_FAIL': renderStep3Fail();  break;
     case 'PASS':       renderPass();       break;
   }
+}
+
+function scanInput(placeholder = 'QR 스캔 대기 중...') {
+  return `<input type="text" class="scan-input" id="scanInput"
+    placeholder="${placeholder}"
+    inputmode="none"
+    autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">`;
 }
 
 function dots(active) {
@@ -42,13 +109,11 @@ function renderStep1() {
       <span class="step-label">STEP 1</span>
     </div>
     <div class="guide-text">품번 또는 로케이션 QR을<br>스캔하세요</div>
-    <input type="text" class="scan-input" id="scanInput"
-      placeholder="스캔 또는 직접 입력"
-      autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    ${scanInput()}
     <div id="errorBanner" class="error-banner"></div>
     <div class="spacer"></div>
   `;
-  bindInput('scanInput', handleStep1Scan);
+  bindScan(handleStep1Scan);
 }
 
 function renderStep2() {
@@ -62,13 +127,11 @@ function renderStep2() {
     <div class="sub-text">📍 픽업 대상 로케이션:</div>
     <ul class="location-list">${items}</ul>
     <div class="sub-text">해당 로케이션 QR을 스캔하세요</div>
-    <input type="text" class="scan-input" id="scanInput"
-      placeholder="스캔 또는 직접 입력"
-      autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    ${scanInput()}
     <div class="spacer"></div>
     <button class="btn-reset" id="resetBtn">← 처음부터</button>
   `;
-  bindInput('scanInput', handleStep2Scan);
+  bindScan(handleStep2Scan);
   document.getElementById('resetBtn').addEventListener('click', resetToStep1);
 }
 
@@ -87,13 +150,11 @@ function renderStep2Fail() {
       스캔됨: ${esc(state.step2FailScan)}
     </div>
     <div class="sub-text" style="text-align:center">올바른 로케이션 QR을 스캔하세요</div>
-    <input type="text" class="scan-input" id="scanInput"
-      placeholder="스캔 또는 직접 입력"
-      autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    ${scanInput()}
     <div class="spacer"></div>
     <button class="btn-reset" id="resetBtn">← 처음부터</button>
   `;
-  bindInput('scanInput', handleStep2Scan);
+  bindScan(handleStep2Scan);
   document.getElementById('resetBtn').addEventListener('click', resetToStep1);
 }
 
@@ -117,13 +178,11 @@ function renderStep3() {
       </div>
     </div>
     <div class="sub-text">이동 로케이션 QR을 스캔하세요</div>
-    <input type="text" class="scan-input" id="scanInput"
-      placeholder="스캔 또는 직접 입력"
-      autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    ${scanInput()}
     <div class="spacer"></div>
     <button class="btn-reset" id="resetBtn">← 처음부터</button>
   `;
-  bindInput('scanInput', handleStep3Scan);
+  bindScan(handleStep3Scan);
   document.getElementById('resetBtn').addEventListener('click', resetToStep1);
 }
 
@@ -142,13 +201,11 @@ function renderStep3Fail() {
       스캔됨: ${esc(state.step3FailScan)}
     </div>
     <div class="sub-text" style="text-align:center">올바른 로케이션 QR을 스캔하세요</div>
-    <input type="text" class="scan-input" id="scanInput"
-      placeholder="스캔 또는 직접 입력"
-      autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    ${scanInput()}
     <div class="spacer"></div>
     <button class="btn-reset" id="resetBtn">← 처음부터</button>
   `;
-  bindInput('scanInput', handleStep3Scan);
+  bindScan(handleStep3Scan);
   document.getElementById('resetBtn').addEventListener('click', resetToStep1);
 }
 
@@ -165,34 +222,35 @@ function renderPass() {
     <button class="btn-next" id="nextBtn">다음 작업 →</button>
   `;
   document.getElementById('nextBtn').addEventListener('click', resetToStep1);
+  // PASS 화면에서는 스캔 핸들러 없음 (_stepHandler = null 유지)
 }
 
-// ── 입력 바인딩 ──
-function bindInput(id, handler) {
-  const input = document.getElementById(id);
+// ──────────────────────────────────────────
+// 입력창 바인딩 (포커스 있을 때 기본 처리)
+// ──────────────────────────────────────────
+function bindScan(handler) {
+  _stepHandler = handler;
+  const input = document.getElementById('scanInput');
   if (!input) return;
 
-  // 자동 포커스
   input.focus();
 
-  // PDA 스캐너는 Enter(13) 또는 Tab(9) 으로 전송 종료
   input.addEventListener('keydown', e => {
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
     if (e.key === 'Enter' || e.key === 'Tab' || e.keyCode === 13 || e.keyCode === 9) {
       e.preventDefault();
       const val = input.value.trim();
-      if (val) {
-        input.value = '';
-        handler(val);
-      }
+      input.value = '';
+      if (val) handler(val);
     }
   });
 
-  // 포커스가 빠져나가면 즉시 복귀 (PDA 전용 — 의도치 않은 블러 방지)
+  // 포커스 이탈 시 자동 복귀 (버튼 클릭 후 복귀 제외)
   input.addEventListener('blur', () => {
     setTimeout(() => {
-      const current = document.getElementById(id);
-      if (current) current.focus();
-    }, 80);
+      const cur = document.getElementById('scanInput');
+      if (cur && !cur.disabled) cur.focus();
+    }, 100);
   });
 }
 
@@ -211,39 +269,29 @@ function resetToStep1() {
 }
 
 // ── STEP 1 핸들러 ──
-async function handleStep1Scan(value) {
+async function handleStep1Scan(rawValue) {
+  const value = parseItemCode(rawValue); // QR에서 품번 추출
   const input = document.getElementById('scanInput');
   if (input) input.disabled = true;
 
-  // ILIKE = 대소문자 무시 정확 일치 (% 와일드카드 이스케이프 후 사용)
   const safe = value.replace(/[%_\\]/g, '\\$&');
 
-  // from_location 조회와 item_code 조회를 병렬로 실행
   const [byFrom, byItem] = await Promise.all([
     withRetry(() =>
-      supabase
-        .from('item_mappings')
-        .select('*')
-        .ilike('from_location', safe)
-        .eq('status', 'active')
-        .limit(1)
+      supabase.from('item_mappings').select('*')
+        .ilike('from_location', safe).eq('status', 'active').limit(1)
     ),
     withRetry(() =>
-      supabase
-        .from('item_mappings')
-        .select('*')
-        .ilike('item_code', safe)
-        .eq('status', 'active')
+      supabase.from('item_mappings').select('*')
+        .ilike('item_code', safe).eq('status', 'active')
     ),
   ]);
 
-  // 네트워크 오류 처리
   if (byFrom.error && byItem.error) {
     showStep1Error(input, '네트워크 오류. 잠시 후 다시 스캔하세요.');
     return;
   }
 
-  // from_location 우선 판단
   if (byFrom.data?.length > 0) {
     state.currentMapping = byFrom.data[0];
     state.screen = 'STEP3';
@@ -259,17 +307,20 @@ async function handleStep1Scan(value) {
     return;
   }
 
-  // 매핑 없음
-  showStep1Error(input, '매핑 정보 없음. 관리자에게 문의하세요.');
+  // 매핑 없음 — 원본 스캔값을 표시해 QR 포맷 파악에 활용
+  const debugMsg = rawValue !== value
+    ? `매핑 없음\n스캔됨: ${value}\n(QR 원본: ${rawValue})`
+    : `매핑 없음\n스캔됨: ${rawValue}`;
+  showStep1Error(input, debugMsg);
 }
 
 function showStep1Error(input, msg) {
-  if (input) { input.disabled = false; input.focus(); }
+  if (input) { input.disabled = false; input.value = ''; input.focus(); }
   const banner = document.getElementById('errorBanner');
   if (!banner) return;
   banner.textContent = msg;
   banner.classList.add('visible');
-  setTimeout(() => banner.classList.remove('visible'), 3500);
+  setTimeout(() => banner.classList.remove('visible'), 4000);
 }
 
 // ── STEP 2 핸들러 ──
@@ -299,7 +350,6 @@ async function handleStep3Scan(value) {
     loc => loc.toLowerCase() === value.toLowerCase()
   );
 
-  // 로그 저장 (비동기, UI 블락 없음)
   supabase.from('placement_logs').insert({
     mapping_id:    mapping.id,
     item_code:     mapping.item_code,
@@ -341,6 +391,11 @@ function esc(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 }
+
+// ── 오류 배너 CSS 여러 줄 표시 대응 ──
+const style = document.createElement('style');
+style.textContent = '.error-banner { white-space: pre-line; }';
+document.head.appendChild(style);
 
 // ── 초기 렌더 ──
 render();

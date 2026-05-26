@@ -55,17 +55,20 @@ function _setScanInputVal(v) {
 }
 
 // ──────────────────────────────────────────
-// QR 품번 추출 함수
+// QR 품번 추출 함수 (GS1 형식)
 // ──────────────────────────────────────────
-// 제품 QR 원본값을 보고 이 함수를 수정하세요.
-// 현재: 원본값 그대로 반환 (passthrough)
-//
-// 예시 포맷별 수정 방법:
-//   URL 마지막 경로  → return raw.split('/').pop().split('?')[0].trim();
-//   파이프 첫 번째   → return raw.split('|')[0].trim();
-//   쉼표 첫 번째     → return raw.split(',')[0].trim();
-//   고정 접두사 제거 → return raw.replace(/^ITEM:/i, '').trim();
+// GS1 AI 91 (사내품번) 뒤의 값을 추출
+// 예) ...91{111117158-0021MX} 920033 → "111117158-0021MX"
+// 예) ...91{110102-071018CE} 920016  → "110102-071018CE"
 function parseItemCode(raw) {
+  // GS1 QR: space = FNC1 구분자로 세그먼트 분리
+  // 하이픈 포함 세그먼트에서 하이픈 앞 마지막 '91' 기준으로 추출
+  for (const seg of raw.split(' ').reverse()) {
+    const dash = seg.indexOf('-');
+    if (dash === -1) continue;
+    const idx = seg.lastIndexOf('91', dash); // 하이픈 이전 마지막 '91'
+    if (idx !== -1) return seg.substring(idx + 2);
+  }
   return raw.trim();
 }
 

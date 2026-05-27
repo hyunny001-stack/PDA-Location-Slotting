@@ -202,7 +202,9 @@ function renderDashboard(items) {
         ${item.status === 'active' ? `
           <button class="btn-sm btn-complete" data-id="${item.id}">완료</button>
           <button class="btn-sm btn-cancel"   data-id="${item.id}">취소</button>
-        ` : '—'}
+        ` : `
+          <button class="btn-sm btn-delete" data-id="${item.id}" data-code="${esc(item.item_code)}" data-from="${esc(item.from_location)}">삭제</button>
+        `}
       </td>
     `;
     dashBody.appendChild(tr);
@@ -212,6 +214,29 @@ function renderDashboard(items) {
     btn.addEventListener('click', () => updateStatus(btn.dataset.id, 'completed')));
   dashBody.querySelectorAll('.btn-cancel').forEach(btn =>
     btn.addEventListener('click', () => updateStatus(btn.dataset.id, 'cancelled')));
+  dashBody.querySelectorAll('.btn-delete').forEach(btn =>
+    btn.addEventListener('click', () => deleteMapping(btn.dataset.id, btn.dataset.code, btn.dataset.from)));
+}
+
+async function deleteMapping(id, itemCode, fromLocation) {
+  const ok = confirm(`[${itemCode} / ${fromLocation}] 작업지서를 삭제하시겠습니까?\n스캔 이력도 모두 함께 삭제됩니다.`);
+  if (!ok) return;
+
+  const { error: logErr } = await supabase
+    .from('placement_logs')
+    .delete()
+    .eq('mapping_id', id);
+
+  if (logErr) { alert('이력 삭제 실패: ' + logErr.message); return; }
+
+  const { error: mapErr } = await supabase
+    .from('item_mappings')
+    .delete()
+    .eq('id', id);
+
+  if (mapErr) { alert('작업지서 삭제 실패: ' + mapErr.message); return; }
+
+  loadDashboard();
 }
 
 async function updateStatus(id, status) {

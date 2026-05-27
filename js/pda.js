@@ -144,8 +144,7 @@ function renderStep3() {
   if (state.allMappings) {
     // 품번 스캔 → 복수 매핑
     itemCode = state.allMappings[0].item_code;
-    const fromList = state.allMappings.map(m => esc(m.from_location)).join(', ');
-    fromContent = `<div style="font-size:18px">${fromList}</div>`;
+    fromContent = state.allMappings.map(m => `<div>${esc(m.from_location)}</div>`).join('');
     const allTo = [...new Set(state.allMappings.flatMap(m => m.to_locations))];
     toLines = allTo.map(l => `<div>${esc(l)}</div>`).join('');
     toDisplayText = state.allMappings.map(m => m.to_display).join(', ');

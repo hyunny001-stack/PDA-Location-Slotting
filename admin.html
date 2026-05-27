@@ -189,6 +189,9 @@
     .btn-cancel:hover { background: #e2e8f0; }
     .btn-delete { background: #fee2e2; color: #b91c1c; }
     .btn-delete:hover { background: #fecaca; }
+    .btn-bulk-delete { background: #fee2e2; color: #b91c1c; }
+    .btn-bulk-delete:hover:not(:disabled) { background: #fecaca; }
+    .btn-bulk-delete:disabled { opacity: 0.4; cursor: not-allowed; }
 
     .loading-cell {
       text-align: center;
@@ -265,11 +268,13 @@
           <option value="cancelled">cancelled</option>
         </select>
         <button id="refreshBtn" class="btn">🔄 새로고침</button>
+        <button id="bulkDeleteBtn" class="btn btn-bulk-delete" disabled>선택 삭제</button>
       </div>
       <div style="overflow-x:auto">
         <table class="dashboard-table">
           <thead>
             <tr>
+              <th style="width:36px"><input type="checkbox" id="checkAll" title="전체 선택"></th>
               <th>품번</th>
               <th>현재 로케이션</th>
               <th>이동 로케이션</th>
@@ -281,7 +286,7 @@
             </tr>
           </thead>
           <tbody id="dashboardBody">
-            <tr><td colspan="8" class="loading-cell">대시보드 탭을 클릭하면 로드됩니다</td></tr>
+            <tr><td colspan="9" class="loading-cell">대시보드 탭을 클릭하면 로드됩니다</td></tr>
           </tbody>
         </table>
       </div>

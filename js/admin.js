@@ -15,9 +15,11 @@ const previewSec   = document.getElementById('previewSection');
 const previewBody  = document.getElementById('previewBody');
 const saveBtn      = document.getElementById('saveBtn');
 const saveFeedback = document.getElementById('saveFeedback');
-const dashBody     = document.getElementById('dashboardBody');
-const statusFilter = document.getElementById('statusFilter');
-const refreshBtn   = document.getElementById('refreshBtn');
+const dashBody      = document.getElementById('dashboardBody');
+const statusFilter  = document.getElementById('statusFilter');
+const refreshBtn    = document.getElementById('refreshBtn');
+const bulkDeleteBtn = document.getElementById('bulkDeleteBtn');
+const checkAll      = document.getElementById('checkAll');
 
 // ── 탭 전환 ──
 tabBtns.forEach(btn => {
@@ -155,9 +157,47 @@ saveBtn.addEventListener('click', async () => {
   }
 });
 
+// ── 체크박스 선택 상태 갱신 ──
+function updateBulkDeleteBtn() {
+  const checked = dashBody.querySelectorAll('.row-check:checked').length;
+  bulkDeleteBtn.disabled = checked === 0;
+  bulkDeleteBtn.textContent = checked > 0 ? `선택 삭제 (${checked})` : '선택 삭제';
+}
+
+checkAll.addEventListener('change', () => {
+  dashBody.querySelectorAll('.row-check').forEach(cb => { cb.checked = checkAll.checked; });
+  updateBulkDeleteBtn();
+});
+
+bulkDeleteBtn.addEventListener('click', async () => {
+  const checked = [...dashBody.querySelectorAll('.row-check:checked')];
+  if (!checked.length) return;
+  const ok = confirm(`선택한 이동지시건 ${checked.length}건을 삭제하시겠습니까?\n스캔 이력도 모두 함께 삭제됩니다.`);
+  if (!ok) return;
+
+  const ids = checked.map(cb => cb.dataset.id);
+
+  const { error: logErr } = await supabase
+    .from('placement_logs')
+    .delete()
+    .in('mapping_id', ids);
+  if (logErr) { alert('이력 삭제 실패: ' + logErr.message); return; }
+
+  const { error: mapErr } = await supabase
+    .from('item_mappings')
+    .delete()
+    .in('id', ids);
+  if (mapErr) { alert('이동지시건 삭제 실패: ' + mapErr.message); return; }
+
+  loadDashboard();
+});
+
 // ── 대시보드 로드 ──
 async function loadDashboard() {
-  dashBody.innerHTML = '<tr><td colspan="8" class="loading-cell">로딩 중…</td></tr>';
+  checkAll.checked = false;
+  bulkDeleteBtn.disabled = true;
+  bulkDeleteBtn.textContent = '선택 삭제';
+  dashBody.innerHTML = '<tr><td colspan="9" class="loading-cell">로딩 중…</td></tr>';
 
   let query = supabase
     .from('item_mappings')
@@ -170,7 +210,7 @@ async function loadDashboard() {
 
   const { data, error } = await query;
   if (error) {
-    dashBody.innerHTML = `<tr><td colspan="8" class="loading-cell">오류: ${esc(error.message)}</td></tr>`;
+    dashBody.innerHTML = `<tr><td colspan="9" class="loading-cell">오류: ${esc(error.message)}</td></tr>`;
     return;
   }
   renderDashboard(data);
@@ -179,7 +219,7 @@ async function loadDashboard() {
 function renderDashboard(items) {
   dashBody.innerHTML = '';
   if (!items.length) {
-    dashBody.innerHTML = '<tr><td colspan="8" class="loading-cell">데이터 없음</td></tr>';
+    dashBody.innerHTML = '<tr><td colspan="9" class="loading-cell">데이터 없음</td></tr>';
     return;
   }
 
@@ -191,6 +231,7 @@ function renderDashboard(items) {
 
     const tr = document.createElement('tr');
     tr.innerHTML = `
+      <td><input type="checkbox" class="row-check" data-id="${item.id}"></td>
       <td>${esc(item.item_code)}</td>
       <td>${esc(item.from_location)}</td>
       <td>${esc(item.to_display)}</td>
@@ -210,6 +251,12 @@ function renderDashboard(items) {
     dashBody.appendChild(tr);
   }
 
+  dashBody.querySelectorAll('.row-check').forEach(cb =>
+    cb.addEventListener('change', () => {
+      const all = dashBody.querySelectorAll('.row-check');
+      checkAll.checked = [...all].every(c => c.checked);
+      updateBulkDeleteBtn();
+    }));
   dashBody.querySelectorAll('.btn-complete').forEach(btn =>
     btn.addEventListener('click', () => updateStatus(btn.dataset.id, 'completed')));
   dashBody.querySelectorAll('.btn-cancel').forEach(btn =>
@@ -219,7 +266,7 @@ function renderDashboard(items) {
 }
 
 async function deleteMapping(id, itemCode, fromLocation) {
-  const ok = confirm(`[${itemCode} / ${fromLocation}] 작업지서를 삭제하시겠습니까?\n스캔 이력도 모두 함께 삭제됩니다.`);
+  const ok = confirm(`[${itemCode} / ${fromLocation}] 이동지시건을 삭제하시겠습니까?\n스캔 이력도 모두 함께 삭제됩니다.`);
   if (!ok) return;
 
   const { error: logErr } = await supabase
@@ -234,7 +281,7 @@ async function deleteMapping(id, itemCode, fromLocation) {
     .delete()
     .eq('id', id);
 
-  if (mapErr) { alert('작업지서 삭제 실패: ' + mapErr.message); return; }
+  if (mapErr) { alert('이동지시건 삭제 실패: ' + mapErr.message); return; }
 
   loadDashboard();
 }

@@ -170,7 +170,7 @@ function renderStep3() {
       </div>
       <div class="arrow">→</div>
       <div class="location-box to-box">
-        <div style="font-size:13px;opacity:0.75;margin-bottom:4px">TO</div>
+        <div style="font-size:13px;opacity:0.6;margin-bottom:4px">TO</div>
         ${toLines}
       </div>
     </div>

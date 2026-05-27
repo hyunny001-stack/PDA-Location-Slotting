@@ -131,7 +131,7 @@ body.status-fail { background: #ef4444; }
 }
 
 .from-box { flex-shrink: 0; }
-.to-box   { flex: 1; max-height: 40vh; overflow-y: auto; font-size: 18px; }
+.to-box   { flex: 1; max-height: 40vh; overflow-y: auto; background: #fbbf24; color: #1e3a8a; border-color: #f59e0b; }
 
 /* ── 결과 화면 ── */
 .result-icon {

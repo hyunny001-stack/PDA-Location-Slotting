@@ -205,3 +205,55 @@ body.status-fail { background: #ef4444; }
 
 /* ── 스페이서 ── */
 .spacer { flex: 1; }
+
+/* ── STEP 2: FROM 헤더 박스 ── */
+.from-header-box {
+  border: 2px solid white;
+  border-radius: 10px;
+  padding: 14px 18px;
+  font-size: 22px;
+  font-weight: bold;
+}
+
+/* ── STEP 2: TO 로케이션+수량 테이블 래퍼 ── */
+.to-list-wrap {
+  border: 2px solid rgba(255, 255, 255, 0.8);
+  border-radius: 10px;
+  overflow: hidden;
+  max-height: 42vh;
+  overflow-y: auto;
+}
+
+/* ── STEP 2: TO 로케이션+수량 테이블 ── */
+.to-qty-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.to-qty-table tr + tr {
+  border-top: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.to-loc-cell {
+  padding: 10px 16px;
+  font-size: 22px;
+  font-weight: bold;
+}
+
+.to-qty-cell {
+  padding: 10px 16px;
+  font-size: 22px;
+  font-weight: bold;
+  text-align: right;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+/* ── STEP 2: 총 로케이션수 / 총 수량 요약 ── */
+.to-summary {
+  display: flex;
+  justify-content: space-between;
+  font-size: 16px;
+  opacity: 0.85;
+  padding: 4px 2px;
+}

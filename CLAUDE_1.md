@@ -4,9 +4,10 @@
 
 **목적**: 창고 작업자가 품목을 잘못된 로케이션에 적치하는 오적치를 원천 차단
 **운영 방식**:
-1. 관리자가 PC 웹에서 3컬럼 Excel(품번·현재로케이션·이동로케이션)을 업로드
-2. 작업자가 PDA로 품번 QR 또는 From 로케이션 QR 스캔 → From→To 확인 → To 로케이션 QR 스캔
-3. 일치 시 PASS(녹색+단진동), 불일치 시 FAIL(빨강+경고음+장진동) → 정위치 스캔 전까지 차단
+1. 관리자가 PC 웹에서 4컬럼 Excel(품번·현재로케이션·이동로케이션·수량)을 업로드
+2. 작업자가 PDA로 품번 QR 스캔 → 대기 중인 TO 로케이션+수량 목록 확인 → TO 로케이션 QR 하나씩 스캔
+3. 일치 시: 해당 로케이션 목록에서 제거 + PASS 피드백, 전체 완료 시 완료 화면
+4. 불일치 또는 중복 적치 시: FAIL(빨강+경고음+장진동) → 정위치 스캔 전까지 차단
 
 **ERP 연동 없음** — 완전 독립 standalone 시스템
 **로그인 없음** — PDA는 URL 즐겨찾기 접속만으로 즉시 사용
@@ -53,18 +54,23 @@
 
 ```sql
 CREATE TABLE item_mappings (
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  item_code     TEXT NOT NULL,        -- 품번 (= QR 스캔값과 동일)
-  from_location TEXT NOT NULL,        -- 출발 로케이션 단일값 (행당 1개, 예: "aa-01-101")
-  to_locations  TEXT[] NOT NULL,      -- 도착 허용 배열 ["aa-01-109","aa-01-110","aa-01-111"]
-  to_display    TEXT NOT NULL,        -- To 화면 표시용 원본 입력값 (예: "aa-01-109~111")
-  status        TEXT DEFAULT 'active'
-                CHECK (status IN ('active','completed','cancelled')),
-  created_at    TIMESTAMPTZ DEFAULT NOW(),
-  updated_at    TIMESTAMPTZ DEFAULT NOW(),
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  item_code      TEXT NOT NULL,        -- 품번 (= QR 스캔값과 동일)
+  from_location  TEXT NOT NULL,        -- 출발 로케이션 단일값 (행당 1개)
+  to_locations   TEXT[] NOT NULL,      -- TO 로케이션 배열 ["AM-01-101","AM-01-102",...]
+  to_quantities  INT[],                -- to_locations 와 index 1:1 대응 수량 [150, 200, ...]
+  to_display     TEXT NOT NULL,        -- 화면 표시용 (to_locations 쉼표 조인)
+  status         TEXT DEFAULT 'active'
+                 CHECK (status IN ('active','completed','cancelled')),
+  created_at     TIMESTAMPTZ DEFAULT NOW(),
+  updated_at     TIMESTAMPTZ DEFAULT NOW(),
 
-  UNIQUE (item_code, from_location)   -- 품번+From 조합 유일
+  UNIQUE (item_code, from_location)    -- 품번+From 조합 유일
 );
+
+-- 기존 테이블 마이그레이션:
+-- ALTER TABLE item_mappings DROP COLUMN IF EXISTS qty_per_location;
+-- ALTER TABLE item_mappings ADD COLUMN IF NOT EXISTS to_quantities INT[];
 ```
 
 ### 테이블 2: `placement_logs` (이동 이력)
@@ -113,26 +119,28 @@ const CONFIG = {
 
 ## 📋 관리자 업로드 Excel 포맷
 
-### 컬럼 구성 (3개 — 최소화)
+### 컬럼 구성 (4개) — 1행 = TO 로케이션 1개
 
 | 열 | 컬럼명 | 필수 | 설명 |
 |----|--------|------|------|
 | **A** | `품번` | ✅ | 품번 (PDA QR 스캔값과 정확히 일치해야 함) |
-| **B** | `현재 로케이션` | ✅ | From 단일 로케이션값 (행당 1개) |
-| **C** | `이동 로케이션` | ✅ | To 단일값 또는 범위 (예: aa-01-109~111) |
+| **B** | `현재 로케이션` | ✅ | From 단일 로케이션값 |
+| **C** | `이동 로케이션` | ✅ | TO 로케이션 **1개** (범위 형식 `~` 사용 불가) |
+| **D** | `수량` | ✅ | 해당 TO 로케이션에 이동할 수량 (1 이상 정수) |
+
+> 같은 (품번 + 현재 로케이션) 조합이 여러 행이면 저장 시 자동으로 하나의 이동지시로 묶임
 
 ### 실제 입력 예시
 
-| 품번 | 현재 로케이션 | 이동 로케이션 |
-|------|-------------|-------------|
-| A | aa-01-101 | aa-01-109~111 |
-| A | aa-01-102 | aa-01-109~111 |
-| A | aa-01-103 | aa-01-109~111 |
-| A | aa-01-104 | aa-01-109~111 |
-| A | aa-01-105 | aa-01-109~111 |
-| B | aa-01-106 | aa-01-112 |
-| B | aa-01-107 | aa-01-113 |
-| B | aa-01-108 | aa-01-114 |
+| 품번 | 현재 로케이션 | 이동 로케이션 | 수량 |
+|------|-------------|-------------|------|
+| A | TEMP_LOC | AM-01-101 | 150 |
+| A | TEMP_LOC | AM-01-102 | 200 |
+| A | TEMP_LOC | AM-01-103 | 150 |
+| B | TEMP_LOC | AM-02-201 | 100 |
+| B | TEMP_LOC | AM-02-202 | 100 |
+
+→ 저장 결과: 품번 A는 TEMP_LOC에서 AM-01-101(150), AM-01-102(200), AM-01-103(150)으로 이동하는 1건의 이동지시 생성
 
 ### C열 이동 로케이션 입력 규칙
 
@@ -195,36 +203,57 @@ function parseLocations(input) {
 [STEP 1] 첫 QR 스캔 (품번 OR From 로케이션)
 
   → 스캔값으로 두 가지 DB 조회 병렬 시도:
+  → 매핑 확인 후 placement_logs에서 이미 완료된 로케이션 복원 (앱 재시작 대응)
 
     (A) item_code = 스캔값 조회 성공  → 품번 QR로 판단
-          해당 품번의 from_location 목록 전체 표시
-          "픽업 로케이션 QR을 스캔하세요" 안내
-          → STEP 2 진입
+          → STEP 2 진입 (대기 중인 TO 로케이션+수량 목록 표시)
 
     (B) from_location = 스캔값 조회 성공  → From 로케이션 QR로 판단
-          해당 행 즉시 특정 → FROM→TO 화면 표시
-          → STEP 3 직행 (STEP 2 건너뜀)
+          → STEP 2 직행 (STEP 2 = 대기 TO 목록)
 
-    (C) 둘 다 없음  → "매핑 정보 없음. 관리자에게 문의하세요" 안내, 재스캔 대기
+    (C) 둘 다 없음  → "매핑 없음" 안내, 재스캔 대기
 
-[STEP 2] From 로케이션 QR 스캔 (품번 QR로 진입한 경우만)
+[STEP 2] TO 로케이션 목록 확인 + QR 스캔
 
-  → 스캔값이 해당 품번의 from_location 목록 중 하나인지 검사
-    ├── 불일치 (FAIL) → FAIL 피드백 + 재스캔 대기
-    └── 일치 (PASS)   → 해당 행 특정 → FROM→TO 화면 표시 → STEP 3 진입
+  화면 구성:
+  - FROM: [from_location]
+  - 대기 중인 TO 로케이션 목록 (완료된 것은 자동 제거됨)
+  - 각 로케이션옆 qty_per_location 수량 표시
+  - 총 로케이션수 / 총 수량 요약
 
-[STEP 3] To 로케이션 QR 스캔
+  TO 로케이션 QR 스캔 시:
+    (1) 유효한 로케이션 + 미완료  → PASS 피드백
+        - 해당 로케이션을 completedLocations에 추가
+        - 목록에서 제거 + 카운트 감소
+        - 미완료 있으면 → STEP 2 재렌더링 (계속 스캔)
+        - 모두 완료 시 → 전체 완료 화면
 
-  → 스캔값이 to_locations 배열에 포함되는지 검사
-    ├── 미포함 (FAIL) → FAIL 화면 + 피드백
-                        + placement_logs 저장(result='fail') + 재스캔 대기
-    └── 포함 (PASS)   → PASS 화면 + 피드백
-                        + placement_logs 저장(result='pass') → 완료
+    (2) 유효한 로케이션 + 이미 완료 (중복 적치)  → FAIL
+        - "이미 적치된 로케이션!" 경고
+        - placement_logs 저장(result='fail')
+
+    (3) 유효하지 않은 로케이션 (오적치)  → FAIL
+        - "잘못된 적치 위치!" 경고
+        - placement_logs 저장(result='fail')
 ```
 
 **중요 규칙**:
-- STEP 2·3 FAIL 시 해당 스텝 재스캔, 다음 단계 진입 차단
+- FAIL 시 해당 스텝 재스캔, 다음 단계 진입 차단
 - `[← 처음부터]` 버튼으로 STEP 1 복귀 항상 가능
+- 앱 재시작 후 같은 품번 스캔 시: DB에서 이미 완료된 로케이션 자동 복원 → 남은 목록만 표시
+
+**state 구조**:
+```javascript
+{
+  screen: 'STEP1' | 'STEP3' | 'STEP3_FAIL' | 'PASS',
+  currentMapping: null,          // 단일 매핑
+  allMappings: null,             // 복수 매핑 (품번→여러 From)
+  passResult: null,
+  step3FailScan: null,
+  completedLocations: new Set(), // 완료된 TO 로케이션 (소문자)
+  failReason: null,              // 'wrong' | 'duplicate'
+}
+```
 
 ### 3. 진동 + 부저음 (`audioFeedback.js`)
 
@@ -373,10 +402,14 @@ function playTone(freq, duration, type = 'sine') {
 ```
 필터: [전체 ▼] [active ▼] [completed ▼]    [🔄 새로고침]
 
-| 품번 | 현재 로케이션 | 이동 로케이션    | 상태   | PASS | FAIL | 등록일 | 조작         |
-|------|-------------|----------------|--------|------|------|--------|------------|
-| A    | aa-01-101   | aa-01-109~111  | active |  3   |  1   | 05-22  | [완료][취소] |
-| B    | aa-01-106   | aa-01-112      | active |  1   |  0   | 05-22  | [완료][취소] |
+| 품번 | 현재 로케이션 | 이동 로케이션   | 상태   | 이동총수량 | PASS   | FAIL | 등록일 | 조작         |
+|------|-------------|----------------|--------|----------|--------|------|--------|------------|
+| A    | aa-01-101   | aa-01-109~111  | active | 300      | 2 / 3  |  1   | 05-22  | [완료][취소] |
+| B    | aa-01-106   | aa-01-112      | active | 200      | 1 / 1  |  0   | 05-22  | [완료][취소] |
+```
+
+- **이동총수량**: 완료된 PASS 수 × qty_per_location (qty=0이면 '-' 표시)
+- **PASS**: `완료 수 / 전체 로케이션 수` (중복 스캔은 고유 로케이션 기준으로 집계)
 ```
 
 ---
@@ -390,9 +423,9 @@ function playTone(freq, duration, type = 'sine') {
 | 품번 비어있음 | "품번 누락" |
 | 현재 로케이션 비어있음 | "현재 로케이션 누락" |
 | 이동 로케이션 비어있음 | "이동 로케이션 누락" |
-| 이동 로케이션 파싱 결과 빈 배열 | "이동 로케이션 파싱 실패" |
-| 범위에서 시작 > 끝 숫자 | "범위 오류 (시작이 끝보다 큼)" |
-| (품번 + 현재 로케이션) 중복 행 | "중복된 품번+로케이션 조합" |
+| 이동 로케이션에 `~` 포함 (범위 형식) | "범위 형식 불가 — 로케이션 1개씩 입력하세요" |
+| 수량이 1 미만이거나 정수 아님 | "수량은 1 이상 정수여야 합니다" |
+| (품번 + 현재 로케이션 + TO 로케이션) 중복 행 | "동일 TO 로케이션 중복" |
 
 ---
 
@@ -470,15 +503,16 @@ Phase 4: 검증
 
 | 시나리오 | 기대 결과 |
 |----------|---------|
-| 품번 QR 스캔 → 품번 A | STEP 2 진입, From 5개 목록 표시 |
-| 품번 A 후 From 로케이션 aa-01-102 스캔 | STEP 3 진입, FROM→TO 화면 표시 |
-| 품번 A 후 From 범위 외 aa-01-199 스캔 | STEP 2 FAIL + 재스캔 유도 |
-| From 로케이션 QR aa-01-106 직접 스캔 | STEP 3 직행, FROM→TO 표시 (aa-01-106 → aa-01-112) |
-| From 로케이션 직접 스캔 후 To aa-01-112 스캔 | PASS + "aa-01-106 → aa-01-112" |
-| From 로케이션 직접 스캔 후 To aa-01-115 스캔 | FAIL + 재스캔 유도 |
-| 범위 To (aa-01-109~111) 중 aa-01-110 스캔 | PASS |
-| 단일 To (aa-01-112) 에 aa-01-112 스캔 | PASS |
+| 품번 QR 스캔 | STEP 2 진입, 대기 중인 TO 로케이션+수량 목록 표시 |
+| TO aa-01-109 스캔 (유효, 미완료) | 목록에서 aa-01-109 제거, 카운트 1 감소, PASS 피드백 |
+| TO aa-01-109 재스캔 (중복) | FAIL + "이미 적치된 로케이션!" 경고 |
+| TO aa-01-115 스캔 (유효하지 않음) | FAIL + "잘못된 적치 위치!" + 재스캔 유도 |
+| 마지막 로케이션 스캔 | "전체 적치 완료!" 화면 표시 |
+| 앱 재시작 후 같은 품번 스캔 | DB에서 완료 이력 복원, 남은 로케이션만 표시 |
+| From 로케이션 QR 직접 스캔 | STEP 2 직행, TO 목록+수량 표시 |
 | 매핑 미등록 QR 스캔 | "매핑 없음" 안내 |
+| Excel — 수량 0 또는 문자 입력 | ⚠️ 오류, 저장 차단 |
 | Excel — 품번 누락 행 포함 | ⚠️ 오류, 저장 차단 |
 | Excel — 중복 (품번+From) 행 포함 | ⚠️ 오류, 저장 차단 |
-| Excel — 정상 파일 업로드 | 미리보기 ✅, 저장 후 PDA 즉시 반영 |
+| Excel — 정상 파일 업로드 | 미리보기에 수량 컬럼 표시, 저장 후 PDA 즉시 반영 |
+| 관리자 대시보드 | 이동총수량(PASS수×수량), PASS "X/N" 형식 확인 |

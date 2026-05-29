@@ -169,8 +169,9 @@
     .badge-cancelled { background: #f1f5f9; color: #64748b; }
 
     .num { text-align: center; font-weight: 700; }
-    .pass-num { color: #16a34a; }
-    .fail-num  { color: #dc2626; }
+    .pass-num     { color: #16a34a; }
+    .fail-num     { color: #dc2626; }
+    .moved-qty-num { color: #0369a1; }
 
     .action-cell { white-space: nowrap; }
 
@@ -219,8 +220,9 @@
       <div class="card-title">① Excel 템플릿 다운로드</div>
       <button id="templateBtn" class="btn">📥 Excel 템플릿 다운로드</button>
       <p style="margin-top:10px; font-size:13px; color:#64748b;">
-        컬럼 구성: 품번 / 현재 로케이션 / 이동 로케이션<br>
-        이동 로케이션 범위 예시: <code>aa-01-109~111</code> → aa-01-109, aa-01-110, aa-01-111
+        컬럼 구성: 품번 / 현재 로케이션 / 이동 로케이션 / 수량<br>
+        <strong>이동 로케이션은 1행에 1개씩 입력</strong> (범위 형식 <code>101~105</code> 사용 불가)<br>
+        같은 품번+현재 로케이션이 여러 행이면 자동으로 하나의 이동지시로 묶입니다
       </p>
     </div>
 
@@ -241,7 +243,8 @@
             <tr>
               <th>품번</th>
               <th>현재 로케이션</th>
-              <th>이동 로케이션 (파싱 결과)</th>
+              <th>이동 로케이션</th>
+              <th>수량</th>
               <th>상태</th>
             </tr>
           </thead>
@@ -279,6 +282,7 @@
               <th>현재 로케이션</th>
               <th>이동 로케이션</th>
               <th>상태</th>
+              <th>이동<br>총수량</th>
               <th>PASS</th>
               <th>FAIL</th>
               <th>등록일</th>
@@ -286,7 +290,7 @@
             </tr>
           </thead>
           <tbody id="dashboardBody">
-            <tr><td colspan="9" class="loading-cell">대시보드 탭을 클릭하면 로드됩니다</td></tr>
+            <tr><td colspan="10" class="loading-cell">대시보드 탭을 클릭하면 로드됩니다</td></tr>
           </tbody>
         </table>
       </div>

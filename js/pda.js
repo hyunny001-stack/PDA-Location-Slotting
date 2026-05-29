@@ -28,14 +28,18 @@ async function sbFetch(path, options = {}) {
 }
 
 // ── 상태 ──
-// currentMapping : 단일 매핑 (FROM 직접 스캔 또는 품번→매핑 1개)
-// allMappings    : 복수 매핑 (품번→매핑 여러 개)
+// currentMapping    : 단일 매핑 (FROM 직접 스캔 또는 품번→매핑 1개)
+// allMappings       : 복수 매핑 (품번→매핑 여러 개)
+// completedLocations: 현 세션에서 완료된 TO 로케이션 Set (소문자 저장)
+// failReason        : 'wrong' | 'duplicate'
 let state = {
   screen: 'STEP1',
   currentMapping: null,
   allMappings: null,
   passResult: null,
   step3FailScan: null,
+  completedLocations: new Set(),
+  failReason: null,
 };
 
 // ── 현재 스텝 핸들러 ──
@@ -137,25 +141,35 @@ function renderStep1() {
   bindScan(handleStep1Scan);
 }
 
-// ── STEP 2 (TO 로케이션 스캔): 단일 매핑 또는 복수 매핑 모두 처리 ──
+// ── STEP 2: TO 로케이션 목록 + 수량 표시 ──
 function renderStep3() {
-  let itemCode, fromContent, toLines, toDisplayText;
+  let itemCode, fromDisplay, allToLocs, qtyMap;
 
   if (state.allMappings) {
-    // 품번 스캔 → 복수 매핑
-    itemCode = state.allMappings[0].item_code;
-    fromContent = state.allMappings.map(m => `<div>${esc(m.from_location)}</div>`).join('');
-    const allTo = [...new Set(state.allMappings.flatMap(m => m.to_locations))];
-    toLines = allTo.map(l => `<div>${esc(l)}</div>`).join('');
-    toDisplayText = state.allMappings.map(m => m.to_display).join(', ');
+    itemCode    = state.allMappings[0].item_code;
+    fromDisplay = [...new Set(state.allMappings.map(m => m.from_location))].join(', ');
+    allToLocs   = state.allMappings.flatMap(m => m.to_locations);
+    qtyMap      = buildQtyMap(state.allMappings);
   } else {
-    // 단일 매핑 (FROM 직접 스캔 또는 품번→1개)
-    const m = state.currentMapping;
-    itemCode = m.item_code;
-    fromContent = esc(m.from_location);
-    toLines = m.to_locations.map(l => `<div>${esc(l)}</div>`).join('');
-    toDisplayText = m.to_display;
+    const m     = state.currentMapping;
+    itemCode    = m.item_code;
+    fromDisplay = m.from_location;
+    allToLocs   = m.to_locations;
+    qtyMap      = buildQtyMap([m]);
   }
+
+  const pendingLocs  = allToLocs.filter(loc => !state.completedLocations.has(loc.toLowerCase()));
+  const totalCount   = pendingLocs.length;
+  const remainingQty = pendingLocs.reduce((acc, loc) => acc + (qtyMap.get(loc.toLowerCase()) ?? 0), 0);
+  const hasQty       = remainingQty > 0;
+
+  const locRows = pendingLocs.map(loc => {
+    const qty = qtyMap.get(loc.toLowerCase()) ?? 0;
+    return `<tr>
+      <td class="to-loc-cell">${esc(loc)}</td>
+      ${hasQty ? `<td class="to-qty-cell">${qty > 0 ? qty.toLocaleString() : '-'}</td>` : ''}
+    </tr>`;
+  }).join('');
 
   app.innerHTML = `
     <div class="app-header">
@@ -163,16 +177,15 @@ function renderStep3() {
       <span class="step-label">STEP 2</span>
       <span class="sub-text" style="margin-left:8px">품번: ${esc(itemCode)}</span>
     </div>
-    <div class="from-to">
-      <div class="location-box from-box">
-        <div style="font-size:13px;opacity:0.75;margin-bottom:4px">FROM</div>
-        ${fromContent}
-      </div>
-      <div class="arrow">→</div>
-      <div class="location-box to-box">
-        <div style="font-size:13px;opacity:0.6;margin-bottom:4px">TO</div>
-        ${toLines}
-      </div>
+    <div class="from-header-box">FROM : ${esc(fromDisplay)}</div>
+    <div class="to-list-wrap">
+      <table class="to-qty-table">
+        <tbody>${locRows}</tbody>
+      </table>
+    </div>
+    <div class="to-summary">
+      <span>총 로케이션수: <strong>${totalCount}개</strong></span>
+      ${hasQty ? `<span>총 수량: <strong>${remainingQty.toLocaleString()}개</strong></span>` : ''}
     </div>
     <div class="sub-text">이동 로케이션 QR을 스캔하세요</div>
     ${scanInput()}
@@ -183,17 +196,34 @@ function renderStep3() {
   document.getElementById('resetBtn').addEventListener('click', resetToStep1);
 }
 
+// 매핑 배열로부터 { 로케이션(소문자) → 수량 } Map 생성
+function buildQtyMap(mappings) {
+  const map = new Map();
+  for (const m of mappings) {
+    (m.to_locations ?? []).forEach((loc, i) => {
+      map.set(loc.toLowerCase(), (m.to_quantities ?? [])[i] ?? 0);
+    });
+  }
+  return map;
+}
+
 function renderStep3Fail() {
   document.body.classList.add('status-fail');
 
   let itemCode, toDisplay;
   if (state.allMappings) {
-    itemCode = state.allMappings[0].item_code;
+    itemCode  = state.allMappings[0].item_code;
     toDisplay = state.allMappings.map(m => m.to_display).join(', ');
   } else {
-    itemCode = state.currentMapping.item_code;
+    itemCode  = state.currentMapping.item_code;
     toDisplay = state.currentMapping.to_display;
   }
+
+  const isDuplicate = state.failReason === 'duplicate';
+  const failTitle   = isDuplicate ? '이미 적치된 로케이션!' : '잘못된 적치 위치!';
+  const failDetail  = isDuplicate
+    ? `스캔됨: ${esc(state.step3FailScan)}<br>해당 로케이션은 이미 완료되었습니다`
+    : `정위치: ${esc(toDisplay)}<br>스캔됨: ${esc(state.step3FailScan)}`;
 
   app.innerHTML = `
     <div class="app-header">
@@ -202,11 +232,8 @@ function renderStep3Fail() {
       <span class="sub-text" style="margin-left:8px">품번: ${esc(itemCode)}</span>
     </div>
     <div class="result-icon">🚫</div>
-    <div class="result-detail">잘못된 적치 위치!</div>
-    <div class="fail-detail">
-      정위치: ${esc(toDisplay)}<br>
-      스캔됨: ${esc(state.step3FailScan)}
-    </div>
+    <div class="result-detail">${failTitle}</div>
+    <div class="fail-detail">${failDetail}</div>
     <div class="sub-text" style="text-align:center">올바른 로케이션 QR을 스캔하세요</div>
     ${scanInput()}
     <div class="spacer"></div>
@@ -221,7 +248,7 @@ function renderPass() {
   app.innerHTML = `
     <div class="spacer"></div>
     <div class="result-icon">✅</div>
-    <div class="result-detail">적치 완료!</div>
+    <div class="result-detail">전체 적치 완료!</div>
     <div class="result-detail" style="font-size:20px;margin-top:10px">
       ${esc(state.passResult.from)} → ${esc(state.passResult.to)}
     </div>
@@ -279,6 +306,8 @@ function resetToStep1() {
     allMappings: null,
     passResult: null,
     step3FailScan: null,
+    completedLocations: new Set(),
+    failReason: null,
   };
   render();
 }
@@ -313,6 +342,7 @@ async function handleStep1Scan(rawValue) {
   // Case 2: FROM 로케이션 직접 스캔 → 바로 TO 스캔
   if (byFrom.data?.length > 0) {
     state.currentMapping = byFrom.data[0];
+    await loadCompletedLocations([state.currentMapping.id]);
     state.screen = 'STEP3';
     render();
     return;
@@ -322,8 +352,10 @@ async function handleStep1Scan(rawValue) {
   if (byItem.data?.length > 0) {
     if (byItem.data.length === 1) {
       state.currentMapping = byItem.data[0];
+      await loadCompletedLocations([state.currentMapping.id]);
     } else {
       state.allMappings = byItem.data;
+      await loadCompletedLocations(state.allMappings.map(m => m.id));
     }
     state.screen = 'STEP3';
     render();
@@ -334,6 +366,18 @@ async function handleStep1Scan(rawValue) {
     ? `매핑 없음\n스캔됨: ${value}\n(QR 원본: ${rawValue})`
     : `매핑 없음\n스캔됨: ${rawValue}`;
   showStep1Error(input, debugMsg);
+}
+
+// DB에서 이미 완료된 로케이션 로드 (앱 재시작 시 복원)
+async function loadCompletedLocations(mappingIds) {
+  if (!mappingIds.length) return;
+  const idList = mappingIds.map(id => encodeURIComponent(id)).join(',');
+  const { data } = await sbFetch(
+    `placement_logs?select=scanned_to&mapping_id=in.(${idList})&result=eq.pass`
+  );
+  state.completedLocations = new Set(
+    (data ?? []).map(l => (l.scanned_to ?? '').toLowerCase())
+  );
 }
 
 function showStep1Error(input, msg) {
@@ -350,22 +394,24 @@ async function handleStep3Scan(value) {
   const input = document.getElementById('scanInput');
   if (input) input.disabled = true;
 
-  let mapping, isPass;
+  let mapping, allToLocations;
 
   if (state.allMappings) {
-    // 복수 매핑: 스캔된 TO가 어느 매핑에 속하는지 찾기
     const matched = state.allMappings.find(m =>
       m.to_locations.some(loc => loc.toLowerCase() === value.toLowerCase())
     );
-    isPass = !!matched;
-    mapping = matched ?? state.allMappings[0]; // FAIL 로그는 첫 번째 매핑으로
+    mapping        = matched ?? state.allMappings[0];
+    allToLocations = state.allMappings.flatMap(m => m.to_locations);
   } else {
-    mapping = state.currentMapping;
-    isPass = mapping.to_locations.some(
-      loc => loc.toLowerCase() === value.toLowerCase()
-    );
+    mapping        = state.currentMapping;
+    allToLocations = mapping.to_locations;
   }
 
+  const isValidLocation = allToLocations.some(loc => loc.toLowerCase() === value.toLowerCase());
+  const isDuplicate     = state.completedLocations.has(value.toLowerCase());
+  const isPass          = isValidLocation && !isDuplicate;
+
+  // 로그 저장 (fire-and-forget)
   sbFetch('placement_logs', {
     method: 'POST',
     headers: { 'Prefer': 'return=minimal' },
@@ -384,12 +430,25 @@ async function handleStep3Scan(value) {
 
   if (isPass) {
     playPassFeedback();
-    state.passResult = { from: mapping.from_location, to: value };
-    state.screen = 'PASS';
+    state.completedLocations.add(value.toLowerCase());
+
+    const totalLocs = state.allMappings
+      ? state.allMappings.reduce((acc, m) => acc + m.to_locations.length, 0)
+      : state.currentMapping.to_locations.length;
+
+    if (state.completedLocations.size >= totalLocs) {
+      // 전체 완료
+      state.passResult = { from: mapping.from_location, to: value };
+      state.screen = 'PASS';
+    } else {
+      // 미완료 — STEP 2 재렌더링 (목록 갱신)
+      state.screen = 'STEP3';
+    }
   } else {
     playFailFeedback();
     state.step3FailScan = value;
-    state.screen = 'STEP3_FAIL';
+    state.failReason    = isDuplicate ? 'duplicate' : 'wrong';
+    state.screen        = 'STEP3_FAIL';
   }
   render();
 }

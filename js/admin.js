@@ -1,10 +1,10 @@
 import { supabase } from './supabaseClient.js';
-import { parseLocations, validateToLocation } from './locationParser.js';
 
 // SheetJS는 admin.html에서 script 태그로 로드
 const XLSX = window.XLSX;
 
-let parsedRows = []; // { item_code, from_location, to_display, to_locations, error }
+// parsedRows: 엑셀 행 단위 { item_code, from_location, to_location, qty, error }
+let parsedRows = [];
 
 // ── DOM 참조 ──
 const tabBtns      = document.querySelectorAll('.tab-btn');
@@ -34,10 +34,12 @@ tabBtns.forEach(btn => {
 // ── 템플릿 다운로드 ──
 document.getElementById('templateBtn').addEventListener('click', () => {
   const ws = XLSX.utils.aoa_to_sheet([
-    ['품번', '현재 로케이션', '이동 로케이션'],
-    ['A', 'aa-01-101', 'aa-01-109~111'],
-    ['A', 'aa-01-102', 'aa-01-109~111'],
-    ['B', 'aa-01-106', 'aa-01-112'],
+    ['품번', '현재 로케이션', '이동 로케이션', '수량'],
+    ['A', 'TEMP_LOC', 'AM-01-101', 150],
+    ['A', 'TEMP_LOC', 'AM-01-102', 150],
+    ['A', 'TEMP_LOC', 'AM-01-103', 200],
+    ['B', 'TEMP_LOC', 'AM-02-201', 100],
+    ['B', 'TEMP_LOC', 'AM-02-202', 100],
   ]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '매핑');
@@ -70,29 +72,30 @@ function handleFile(file) {
   reader.readAsArrayBuffer(file);
 }
 
+// ── 엑셀 파싱: 1행 = TO 로케이션 1개 ──
 function processRows(raw) {
   const dataRows = raw.slice(1).filter(r => r.some(c => String(c).trim()));
-  const seen = new Set();
+  const seen = new Set(); // (item_code|from_location|to_location) 중복 검사
 
   parsedRows = dataRows.map(r => {
     const item_code     = String(r[0] ?? '').trim();
     const from_location = String(r[1] ?? '').trim();
-    const to_display    = String(r[2] ?? '').trim();
+    const to_location   = String(r[2] ?? '').trim();
+    const qty           = parseInt(r[3], 10);
 
     let error = null;
-    if (!item_code)       error = '품번 누락';
-    else if (!from_location) error = '현재 로케이션 누락';
+    if (!item_code)           error = '품번 누락';
+    else if (!from_location)  error = '현재 로케이션 누락';
+    else if (!to_location)    error = '이동 로케이션 누락';
+    else if (to_location.includes('~')) error = '범위 형식 불가 — 로케이션 1개씩 입력하세요';
+    else if (isNaN(qty) || qty < 1)    error = '수량은 1 이상 정수여야 합니다';
     else {
-      error = validateToLocation(to_display);
-      if (!error) {
-        const key = `${item_code}|${from_location}`;
-        if (seen.has(key)) error = '중복된 품번+로케이션 조합';
-        else seen.add(key);
-      }
+      const key = `${item_code}|${from_location}|${to_location.toLowerCase()}`;
+      if (seen.has(key)) error = '동일 TO 로케이션 중복';
+      else seen.add(key);
     }
 
-    const to_locations = error ? [] : parseLocations(to_display);
-    return { item_code, from_location, to_display, to_locations, error };
+    return { item_code, from_location, to_location, qty: isNaN(qty) ? 0 : qty, error };
   });
 
   renderPreview();
@@ -111,7 +114,8 @@ function renderPreview() {
     tr.innerHTML = `
       <td>${esc(row.item_code)}</td>
       <td>${esc(row.from_location)}</td>
-      <td>${esc(row.error ? row.to_display : row.to_locations.join(', '))}</td>
+      <td>${esc(row.to_location)}</td>
+      <td>${row.error ? '-' : esc(String(row.qty))}</td>
       <td>${row.error ? `⚠️ ${esc(row.error)}` : '✅'}</td>
     `;
     previewBody.appendChild(tr);
@@ -127,17 +131,35 @@ function esc(str) {
     .replace(/>/g, '&gt;');
 }
 
-// ── Supabase 저장 ──
+// ── Supabase 저장: 같은 (품번+FROM)끼리 묶어서 1행으로 upsert ──
 saveBtn.addEventListener('click', async () => {
   saveBtn.disabled = true;
   saveBtn.textContent = '저장 중…';
   saveFeedback.textContent = '';
 
-  const rows = parsedRows.map(r => ({
-    item_code:     r.item_code,
-    from_location: r.from_location,
-    to_locations:  r.to_locations,
-    to_display:    r.to_display,
+  // (item_code, from_location) 기준으로 그룹핑
+  const groupMap = new Map();
+  for (const r of parsedRows) {
+    const key = `${r.item_code}|${r.from_location}`;
+    if (!groupMap.has(key)) {
+      groupMap.set(key, {
+        item_code:     r.item_code,
+        from_location: r.from_location,
+        to_locations:  [],
+        to_quantities: [],
+      });
+    }
+    const g = groupMap.get(key);
+    g.to_locations.push(r.to_location);
+    g.to_quantities.push(r.qty);
+  }
+
+  const rows = [...groupMap.values()].map(g => ({
+    item_code:     g.item_code,
+    from_location: g.from_location,
+    to_locations:  g.to_locations,
+    to_quantities: g.to_quantities,
+    to_display:    g.to_locations.join(', '),
     status:        'active',
     updated_at:    new Date().toISOString(),
   }));
@@ -152,7 +174,7 @@ saveBtn.addEventListener('click', async () => {
     saveFeedback.className = 'feedback error';
     saveBtn.disabled = false;
   } else {
-    saveFeedback.textContent = `✅ ${rows.length}건 저장 완료`;
+    saveFeedback.textContent = `✅ ${rows.length}건 저장 완료 (총 ${parsedRows.length}개 로케이션)`;
     saveFeedback.className = 'feedback success';
   }
 });
@@ -197,11 +219,11 @@ async function loadDashboard() {
   checkAll.checked = false;
   bulkDeleteBtn.disabled = true;
   bulkDeleteBtn.textContent = '선택 삭제';
-  dashBody.innerHTML = '<tr><td colspan="9" class="loading-cell">로딩 중…</td></tr>';
+  dashBody.innerHTML = '<tr><td colspan="10" class="loading-cell">로딩 중…</td></tr>';
 
   let query = supabase
     .from('item_mappings')
-    .select('*, placement_logs(result)')
+    .select('*, placement_logs(result, scanned_to)')
     .order('created_at', { ascending: false });
 
   if (statusFilter.value !== 'all') {
@@ -210,7 +232,7 @@ async function loadDashboard() {
 
   const { data, error } = await query;
   if (error) {
-    dashBody.innerHTML = `<tr><td colspan="9" class="loading-cell">오류: ${esc(error.message)}</td></tr>`;
+    dashBody.innerHTML = `<tr><td colspan="10" class="loading-cell">오류: ${esc(error.message)}</td></tr>`;
     return;
   }
   renderDashboard(data);
@@ -219,24 +241,40 @@ async function loadDashboard() {
 function renderDashboard(items) {
   dashBody.innerHTML = '';
   if (!items.length) {
-    dashBody.innerHTML = '<tr><td colspan="9" class="loading-cell">데이터 없음</td></tr>';
+    dashBody.innerHTML = '<tr><td colspan="10" class="loading-cell">데이터 없음</td></tr>';
     return;
   }
 
   for (const item of items) {
-    const logs = item.placement_logs ?? [];
-    const pass = logs.filter(l => l.result === 'pass').length;
-    const fail = logs.filter(l => l.result === 'fail').length;
-    const date = item.created_at ? item.created_at.slice(5, 10) : '-';
+    const logs         = item.placement_logs ?? [];
+    const passLogs     = logs.filter(l => l.result === 'pass');
+    const fail         = logs.filter(l => l.result === 'fail').length;
+    const toLocations  = item.to_locations  ?? [];
+    const toQuantities = item.to_quantities ?? [];
+    const totalLocs    = toLocations.length;
+    const date         = item.created_at ? item.created_at.slice(5, 10) : '-';
+
+    // 완료된 고유 로케이션 Set
+    const completedLocs = new Set(passLogs.map(l => (l.scanned_to ?? '').toLowerCase()));
+    const pass = completedLocs.size;
+
+    // 이동 총수량: 완료된 로케이션의 수량 합산
+    const movedQty = toLocations.reduce((acc, loc, i) => {
+      return completedLocs.has(loc.toLowerCase()) ? acc + (toQuantities[i] ?? 0) : acc;
+    }, 0);
+
+    // 전체 수량 (참고용)
+    const totalQty = toQuantities.reduce((a, b) => a + b, 0);
 
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><input type="checkbox" class="row-check" data-id="${item.id}"></td>
       <td>${esc(item.item_code)}</td>
       <td>${esc(item.from_location)}</td>
-      <td>${esc(item.to_display)}</td>
+      <td title="${esc(item.to_display)}">${esc(truncate(item.to_display, 30))}</td>
       <td><span class="badge badge-${item.status}">${item.status}</span></td>
-      <td class="num pass-num">${pass}</td>
+      <td class="num moved-qty-num">${totalQty > 0 ? movedQty.toLocaleString() : '-'}</td>
+      <td class="num pass-num">${pass} / ${totalLocs}</td>
       <td class="num fail-num">${fail}</td>
       <td>${date}</td>
       <td class="action-cell">
@@ -263,6 +301,10 @@ function renderDashboard(items) {
     btn.addEventListener('click', () => updateStatus(btn.dataset.id, 'cancelled')));
   dashBody.querySelectorAll('.btn-delete').forEach(btn =>
     btn.addEventListener('click', () => deleteMapping(btn.dataset.id, btn.dataset.code, btn.dataset.from)));
+}
+
+function truncate(str, len) {
+  return str && str.length > len ? str.slice(0, len) + '…' : (str ?? '');
 }
 
 async function deleteMapping(id, itemCode, fromLocation) {

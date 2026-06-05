@@ -85,7 +85,9 @@ function _setScanInputVal(v) {
 // GS1 QR 품번 추출
 // ──────────────────────────────────────────
 function parseItemCode(raw) {
-  const normalized = raw.replace(/\x1d/g, ' ');
+  // +, =, ~ 뒤는 로트/수량 등 부가정보 — 첫 번째 필드만 사용
+  const primary = raw.split(/[+=~]/)[0].trim();
+  const normalized = primary.replace(/\x1d/g, ' ');
   for (const seg of normalized.split(' ').reverse()) {
     const clean = seg.trim();
     const dash = clean.indexOf('-');

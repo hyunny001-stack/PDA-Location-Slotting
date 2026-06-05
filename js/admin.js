@@ -18,8 +18,11 @@ const saveFeedback = document.getElementById('saveFeedback');
 const dashBody      = document.getElementById('dashboardBody');
 const statusFilter  = document.getElementById('statusFilter');
 const refreshBtn    = document.getElementById('refreshBtn');
-const bulkDeleteBtn = document.getElementById('bulkDeleteBtn');
-const checkAll      = document.getElementById('checkAll');
+const bulkDeleteBtn  = document.getElementById('bulkDeleteBtn');
+const excelDownBtn   = document.getElementById('excelDownBtn');
+const checkAll       = document.getElementById('checkAll');
+
+let dashboardData = [];
 
 // ── 탭 전환 ──
 tabBtns.forEach(btn => {
@@ -235,6 +238,8 @@ async function loadDashboard() {
     dashBody.innerHTML = `<tr><td colspan="10" class="loading-cell">오류: ${esc(error.message)}</td></tr>`;
     return;
   }
+  dashboardData = data;
+  excelDownBtn.disabled = data.length === 0;
   renderDashboard(data);
 }
 
@@ -340,3 +345,40 @@ async function updateStatus(id, status) {
 
 statusFilter.addEventListener('change', loadDashboard);
 refreshBtn.addEventListener('click', loadDashboard);
+
+excelDownBtn.addEventListener('click', () => {
+  if (!dashboardData.length) return;
+
+  const rows = dashboardData.map(item => {
+    const logs         = item.placement_logs ?? [];
+    const passLogs     = logs.filter(l => l.result === 'pass');
+    const fail         = logs.filter(l => l.result === 'fail').length;
+    const toLocations  = item.to_locations  ?? [];
+    const toQuantities = item.to_quantities ?? [];
+    const totalLocs    = toLocations.length;
+    const completedLocs = new Set(passLogs.map(l => (l.scanned_to ?? '').toLowerCase()));
+    const pass = completedLocs.size;
+    const movedQty = toLocations.reduce((acc, loc, i) =>
+      completedLocs.has(loc.toLowerCase()) ? acc + (toQuantities[i] ?? 0) : acc, 0);
+    const totalQty = toQuantities.reduce((a, b) => a + b, 0);
+    const date = item.created_at ? item.created_at.slice(0, 10) : '-';
+
+    return {
+      '품번':        item.item_code,
+      '현재 로케이션': item.from_location,
+      '이동 로케이션': item.to_display,
+      '상태':        item.status,
+      '이동 총수량':  totalQty > 0 ? movedQty : 0,
+      'PASS':       `${pass} / ${totalLocs}`,
+      'FAIL':       fail,
+      '등록일':      date,
+    };
+  });
+
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '현황');
+
+  const today = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(wb, `로케이션_이동현황_${today}.xlsx`);
+});

@@ -85,17 +85,29 @@ function _setScanInputVal(v) {
 // GS1 QR 품번 추출
 // ──────────────────────────────────────────
 function parseItemCode(raw) {
-  // +, =, ~ 뒤는 로트/수량 등 부가정보 — 첫 번째 필드만 사용
-  const primary = raw.split(/[+=~]/)[0].trim();
-  const normalized = primary.replace(/\x1d/g, ' ');
-  for (const seg of normalized.split(' ').reverse()) {
-    const clean = seg.trim();
-    const dash = clean.indexOf('-');
-    if (dash === -1) continue;
-    const idx = clean.lastIndexOf('91', dash);
-    if (idx !== -1) return clean.substring(idx + 2);
+  const first = raw[0] ?? '';
+  const normalized = raw.replace(/\x1d/g, ' ').trim();
+
+  // 품번은 "1"로 시작하며 앞 15자리 (e.g. "110202-230003CN")
+  if (first === '1') return normalized.substring(0, 15);
+
+  // "0"으로 시작: GS1 AI "91" 파싱
+  if (first === '0') {
+    for (const seg of normalized.split(' ').reverse()) {
+      const clean = seg.trim();
+      const dash = clean.indexOf('-');
+      if (dash === -1) continue;
+      const idx = clean.lastIndexOf('91', dash);
+      if (idx !== -1) return clean.substring(idx + 2);
+    }
   }
-  return normalized.split(' ')[0].trim();
+
+  // "+" 포함 시 앞 필드가 코드 (로트/수량 부가정보 제거)
+  const plusIdx = normalized.indexOf('+');
+  if (plusIdx !== -1) return normalized.substring(0, plusIdx);
+
+  // 로케이션 QR 등 그대로 반환
+  return normalized.split(' ').filter(Boolean)[0] ?? normalized;
 }
 
 // ──────────────────────────────────────────

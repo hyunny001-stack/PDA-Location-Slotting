@@ -91,10 +91,10 @@ function parseItemCode(raw) {
   // 품번은 "1"로 시작하며 앞 15자리 (e.g. "110202-230003CN")
   if (first === '1') return normalized.substring(0, 15);
 
-  // "0"으로 시작 (GS1): 품번 패턴 직접 검색 — 15자리, '1'시작, 하이픈 1개, 끝 2자리 대문자
+  // "0"으로 시작 (GS1): AI 01(GTIN) 16자 이후에서 AI "91" 앵커로 품번 추출
   if (first === '0') {
-    const m = normalized.match(/1\d{2,9}-\d{2,9}[A-Z]{2}/);
-    if (m && m[0].length === 15) return m[0];
+    const m = normalized.slice(16).match(/91(1\d{2,8}-\d{2,8}[A-Z]{2})/);
+    if (m && m[1].length === 15) return m[1];
   }
 
   // "+" 포함 시 앞 필드가 코드 (로트/수량 부가정보 제거)

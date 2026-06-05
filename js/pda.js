@@ -88,20 +88,31 @@ function parseItemCode(raw) {
   const first = raw[0] ?? '';
   const normalized = raw.replace(/\x1d/g, ' ').trim();
 
-  // 품번은 "1"로 시작하며 앞 15자리 (e.g. "110202-230003CN")
+  // 로직 1 — 엑셀 수식: "1"로 시작하면 앞 15자리
   if (first === '1') return normalized.substring(0, 15);
 
-  // "0"으로 시작 (GS1): AI 01(GTIN) 16자 이후에서 AI "91" 앵커로 품번 추출
+  // 로직 2 — GS1 연속문자열: "0"으로 시작, GTIN(16자) 이후 AI "91" 앵커
   if (first === '0') {
     const m = normalized.slice(16).match(/91(1\d{2,8}-\d{2,8}[A-Z]{2})/);
     if (m && m[1].length === 15) return m[1];
   }
 
-  // "+" 포함 시 앞 필드가 코드 (로트/수량 부가정보 제거)
+  // 로직 3 — GS1 구분자(\x1d) 방식: 세그먼트별 AI "91" 파싱
+  if (raw.includes('\x1d')) {
+    for (const seg of normalized.split(' ').reverse()) {
+      const clean = seg.trim();
+      const dash = clean.indexOf('-');
+      if (dash === -1) continue;
+      const idx = clean.lastIndexOf('91', dash);
+      if (idx !== -1) return clean.substring(idx + 2);
+    }
+  }
+
+  // 로직 4 — "+" 구분자: 부가정보 앞 텍스트
   const plusIdx = normalized.indexOf('+');
   if (plusIdx !== -1) return normalized.substring(0, plusIdx);
 
-  // 로케이션 QR 등 그대로 반환
+  // 로직 5 — 그대로 반환 (로케이션 QR 등)
   return normalized.split(' ').filter(Boolean)[0] ?? normalized;
 }
 

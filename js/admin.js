@@ -18,9 +18,11 @@ const saveFeedback = document.getElementById('saveFeedback');
 const dashBody      = document.getElementById('dashboardBody');
 const statusFilter  = document.getElementById('statusFilter');
 const refreshBtn    = document.getElementById('refreshBtn');
-const bulkDeleteBtn  = document.getElementById('bulkDeleteBtn');
-const excelDownBtn   = document.getElementById('excelDownBtn');
-const checkAll       = document.getElementById('checkAll');
+const bulkDeleteBtn   = document.getElementById('bulkDeleteBtn');
+const bulkCompleteBtn = document.getElementById('bulkCompleteBtn');
+const bulkStatusSelect = document.getElementById('bulkStatusSelect');
+const excelDownBtn    = document.getElementById('excelDownBtn');
+const checkAll        = document.getElementById('checkAll');
 
 let dashboardData = [];
 
@@ -186,7 +188,9 @@ saveBtn.addEventListener('click', async () => {
 function updateBulkDeleteBtn() {
   const checked = dashBody.querySelectorAll('.row-check:checked').length;
   bulkDeleteBtn.disabled = checked === 0;
+  bulkCompleteBtn.disabled = checked === 0;
   bulkDeleteBtn.textContent = checked > 0 ? `선택 삭제 (${checked})` : '선택 삭제';
+  bulkCompleteBtn.textContent = checked > 0 ? `일괄 완료처리 (${checked})` : '일괄 완료처리';
 }
 
 checkAll.addEventListener('change', () => {
@@ -222,6 +226,9 @@ async function loadDashboard() {
   checkAll.checked = false;
   bulkDeleteBtn.disabled = true;
   bulkDeleteBtn.textContent = '선택 삭제';
+  bulkCompleteBtn.disabled = true;
+  bulkCompleteBtn.textContent = '일괄 완료처리';
+  bulkStatusSelect.value = '';
   dashBody.innerHTML = '<tr><td colspan="10" class="loading-cell">로딩 중…</td></tr>';
 
   let query = supabase
@@ -345,6 +352,37 @@ async function updateStatus(id, status) {
 
 statusFilter.addEventListener('change', loadDashboard);
 refreshBtn.addEventListener('click', loadDashboard);
+
+// ── 일괄 완료처리 ──
+bulkCompleteBtn.addEventListener('click', async () => {
+  const checked = [...dashBody.querySelectorAll('.row-check:checked')];
+  if (!checked.length) return;
+  const ids = checked.map(cb => cb.dataset.id);
+  if (!confirm(`선택한 ${ids.length}건을 완료처리하시겠습니까?`)) return;
+  const { error } = await supabase
+    .from('item_mappings')
+    .update({ status: 'completed', updated_at: new Date().toISOString() })
+    .in('id', ids);
+  if (error) { alert('완료처리 실패: ' + error.message); return; }
+  loadDashboard();
+});
+
+// ── 상태 헤더 드롭다운 — 선택 항목 일괄 상태변경 ──
+bulkStatusSelect.addEventListener('change', async () => {
+  const status = bulkStatusSelect.value;
+  if (!status) return;
+  bulkStatusSelect.value = '';
+  const checked = [...dashBody.querySelectorAll('.row-check:checked')];
+  if (!checked.length) { alert('변경할 항목을 먼저 선택해주세요.'); return; }
+  const ids = checked.map(cb => cb.dataset.id);
+  if (!confirm(`선택한 ${ids.length}건을 '${status}'로 변경하시겠습니까?`)) return;
+  const { error } = await supabase
+    .from('item_mappings')
+    .update({ status, updated_at: new Date().toISOString() })
+    .in('id', ids);
+  if (error) { alert('상태 변경 실패: ' + error.message); return; }
+  loadDashboard();
+});
 
 excelDownBtn.addEventListener('click', () => {
   if (!dashboardData.length) return;

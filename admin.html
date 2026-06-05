@@ -194,9 +194,24 @@
     .btn-bulk-delete:hover:not(:disabled) { background: #fecaca; }
     .btn-bulk-delete:disabled { opacity: 0.4; cursor: not-allowed; }
 
+    .btn-bulk-complete { background: #dbeafe; color: #1d4ed8; }
+    .btn-bulk-complete:hover:not(:disabled) { background: #bfdbfe; }
+    .btn-bulk-complete:disabled { opacity: 0.4; cursor: not-allowed; }
+
     .btn-excel { background: #dcfce7; color: #15803d; }
     .btn-excel:hover { background: #bbf7d0; }
     .btn-excel:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .th-status-select {
+      font-size: 12px;
+      padding: 3px 6px;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      background: #f8fafc;
+      color: #334155;
+      cursor: pointer;
+      font-weight: 600;
+    }
 
     .loading-cell {
       text-align: center;
@@ -276,6 +291,7 @@
         </select>
         <button id="refreshBtn" class="btn">🔄 새로고침</button>
         <button id="excelDownBtn" class="btn btn-excel">📥 엑셀 다운</button>
+        <button id="bulkCompleteBtn" class="btn btn-bulk-complete" disabled>일괄 완료처리</button>
         <button id="bulkDeleteBtn" class="btn btn-bulk-delete" disabled>선택 삭제</button>
       </div>
       <div style="overflow-x:auto">
@@ -286,7 +302,14 @@
               <th>품번</th>
               <th>현재 로케이션</th>
               <th>이동 로케이션</th>
-              <th>상태</th>
+              <th>
+                <select id="bulkStatusSelect" class="th-status-select" title="선택 항목 상태 일괄변경">
+                  <option value="">상태</option>
+                  <option value="active">→ active</option>
+                  <option value="completed">→ completed</option>
+                  <option value="cancelled">→ cancelled</option>
+                </select>
+              </th>
               <th>이동<br>총수량</th>
               <th>PASS</th>
               <th>FAIL</th>

@@ -91,15 +91,10 @@ function parseItemCode(raw) {
   // 품번은 "1"로 시작하며 앞 15자리 (e.g. "110202-230003CN")
   if (first === '1') return normalized.substring(0, 15);
 
-  // "0"으로 시작: GS1 AI "91" 파싱
+  // "0"으로 시작 (GS1): 품번 패턴 직접 검색 — 15자리, '1'시작, 하이픈 1개, 끝 2자리 대문자
   if (first === '0') {
-    for (const seg of normalized.split(' ').reverse()) {
-      const clean = seg.trim();
-      const dash = clean.indexOf('-');
-      if (dash === -1) continue;
-      const idx = clean.lastIndexOf('91', dash);
-      if (idx !== -1) return clean.substring(idx + 2);
-    }
+    const m = normalized.match(/1\d{2,9}-\d{2,9}[A-Z]{2}/);
+    if (m && m[0].length === 15) return m[0];
   }
 
   // "+" 포함 시 앞 필드가 코드 (로트/수량 부가정보 제거)

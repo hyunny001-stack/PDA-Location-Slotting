@@ -42,6 +42,17 @@ let state = {
   failReason: null,
 };
 
+// 관리자 엑셀 등록과 재고조사 자동 전송을 구분하지 않고,
+// 동일한 item_mappings의 미완료 작업을 첫 화면에 함께 표시한다.
+const TASK_QUEUE_REFRESH_MS = 5_000;
+let taskQueue = {
+  items: [],
+  loading: true,
+  error: null,
+};
+let taskQueueRequestInFlight = false;
+let taskQueueTimer = null;
+
 // ── 현재 스텝 핸들러 ──
 let _stepHandler = null;
 
@@ -153,12 +164,127 @@ function renderStep1() {
       ${dots(1)}
       <span class="step-label">STEP 1</span>
     </div>
-    <div class="guide-text">품번 또는 로케이션 QR을<br>스캔하세요</div>
+    <div class="guide-text">이동할 작업을 확인하세요</div>
+    <div class="sub-text">FROM으로 이동한 뒤 품번 또는 FROM 로케이션 QR을 스캔하세요</div>
     ${scanInput()}
     <div id="errorBanner" class="error-banner"></div>
-    <div class="spacer"></div>
+    <section class="task-queue" aria-labelledby="taskQueueTitle">
+      <div class="task-queue-heading">
+        <strong id="taskQueueTitle">이동 대기 작업</strong>
+        <span id="taskQueueCount" class="task-queue-count">조회 중</span>
+      </div>
+      <div id="taskQueueList" class="task-queue-list" aria-live="polite"></div>
+      <p class="task-queue-footnote">관리자 등록 후 자동 반영 · 5초마다 갱신</p>
+    </section>
   `;
   bindScan(handleStep1Scan);
+  renderTaskQueue();
+  void loadTaskQueue();
+}
+
+function pendingTargets(mapping) {
+  const completed = new Set(
+    (mapping.placement_logs ?? [])
+      .filter(log => log.result === 'pass')
+      .map(log => String(log.scanned_to ?? '').toLowerCase())
+  );
+
+  return (mapping.to_locations ?? [])
+    .map((location, index) => ({
+      location,
+      quantity: Number((mapping.to_quantities ?? [])[index] ?? 0),
+    }))
+    .filter(target => !completed.has(String(target.location).toLowerCase()));
+}
+
+function compareTaskRoute(a, b) {
+  const byFrom = String(a.from_location).localeCompare(
+    String(b.from_location),
+    'ko-KR',
+    { numeric: true, sensitivity: 'base' }
+  );
+  if (byFrom !== 0) return byFrom;
+  return String(a.item_code).localeCompare(String(b.item_code), 'ko-KR', {
+    numeric: true,
+    sensitivity: 'base',
+  });
+}
+
+function renderTaskQueue() {
+  const count = document.getElementById('taskQueueCount');
+  const list = document.getElementById('taskQueueList');
+  if (!count || !list) return;
+
+  if (taskQueue.loading && taskQueue.items.length === 0) {
+    count.textContent = '조회 중';
+    list.innerHTML = '<p class="task-queue-empty">작업을 불러오는 중입니다…</p>';
+    return;
+  }
+
+  if (taskQueue.error && taskQueue.items.length === 0) {
+    count.textContent = '조회 실패';
+    list.innerHTML = '<p class="task-queue-empty task-queue-error">목록을 불러오지 못했습니다. QR 스캔은 계속 사용할 수 있습니다.</p>';
+    return;
+  }
+
+  count.textContent = `${taskQueue.items.length}건`;
+  if (taskQueue.items.length === 0) {
+    list.innerHTML = '<p class="task-queue-empty">현재 이동 대기 작업이 없습니다.</p>';
+    return;
+  }
+
+  list.innerHTML = taskQueue.items.map((task, index) => {
+    const targetRows = task.pendingTargets.map(target => `
+      <div class="task-target-row">
+        <span><b>TO</b> ${esc(target.location)}</span>
+        <strong>${target.quantity > 0 ? `${target.quantity.toLocaleString()}개` : '수량 확인'}</strong>
+      </div>
+    `).join('');
+
+    return `
+      <article class="task-card">
+        <div class="task-card-route">
+          <span class="task-order">${index + 1}</span>
+          <span><b>FROM</b> ${esc(task.from_location)}</span>
+        </div>
+        <div class="task-item-code"><b>품번</b> ${esc(task.item_code)}</div>
+        <div class="task-targets">${targetRows}</div>
+      </article>
+    `;
+  }).join('');
+}
+
+async function loadTaskQueue() {
+  if (taskQueueRequestInFlight) return;
+  taskQueueRequestInFlight = true;
+
+  const result = await sbFetch(
+    'item_mappings?select=id,item_code,from_location,to_locations,to_quantities,to_display,created_at,placement_logs(result,scanned_to)&status=eq.active&order=from_location.asc'
+  );
+
+  taskQueueRequestInFlight = false;
+  if (result.error) {
+    taskQueue = { ...taskQueue, loading: false, error: result.error };
+    if (state.screen === 'STEP1') renderTaskQueue();
+    return;
+  }
+
+  const items = (result.data ?? [])
+    .map(mapping => ({ ...mapping, pendingTargets: pendingTargets(mapping) }))
+    .filter(mapping => mapping.pendingTargets.length > 0)
+    .sort(compareTaskRoute);
+
+  taskQueue = { items, loading: false, error: null };
+  if (state.screen === 'STEP1') renderTaskQueue();
+}
+
+function startTaskQueueRefresh() {
+  if (taskQueueTimer) return;
+  taskQueueTimer = setInterval(() => {
+    if (state.screen === 'STEP1' && document.visibilityState === 'visible') {
+      void loadTaskQueue();
+    }
+  }, TASK_QUEUE_REFRESH_MS);
 }
 
 // ── STEP 2: TO 로케이션 목록 + 수량 표시 ──
@@ -501,4 +627,11 @@ const style = document.createElement('style');
 style.textContent = '.error-banner { white-space: pre-line; }';
 document.head.appendChild(style);
 
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && state.screen === 'STEP1') {
+    void loadTaskQueue();
+  }
+});
+
 render();
+startTaskQueueRefresh();

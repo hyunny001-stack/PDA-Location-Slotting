@@ -257,3 +257,113 @@ body.status-fail { background: #ef4444; }
   opacity: 0.85;
   padding: 4px 2px;
 }
+
+/* ── STEP 1: 자동 이동 대기목록 ── */
+.task-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.task-queue-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 19px;
+}
+
+.task-queue-count {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  font-size: 15px;
+  font-weight: bold;
+}
+
+.task-queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 52vh;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.task-card {
+  flex-shrink: 0;
+  overflow: hidden;
+  border: 2px solid rgba(255, 255, 255, 0.82);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.task-card-route,
+.task-item-code,
+.task-target-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.task-card-route {
+  justify-content: flex-start;
+  background: rgba(255, 255, 255, 0.13);
+  font-size: 20px;
+  font-weight: bold;
+}
+
+.task-order {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: white;
+  color: #1e40af;
+  font-size: 15px;
+}
+
+.task-item-code {
+  justify-content: flex-start;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  font-size: 17px;
+}
+
+.task-targets {
+  background: #fbbf24;
+  color: #172554;
+}
+
+.task-target-row {
+  font-size: 18px;
+}
+
+.task-target-row + .task-target-row {
+  border-top: 1px solid rgba(30, 64, 175, 0.2);
+}
+
+.task-queue-empty {
+  padding: 18px 14px;
+  border: 2px dashed rgba(255, 255, 255, 0.45);
+  border-radius: 10px;
+  font-size: 16px;
+  text-align: center;
+  opacity: 0.85;
+}
+
+.task-queue-error {
+  background: rgba(127, 29, 29, 0.45);
+}
+
+.task-queue-footnote {
+  font-size: 13px;
+  text-align: right;
+  opacity: 0.68;
+}

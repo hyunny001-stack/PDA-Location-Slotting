@@ -11,6 +11,7 @@ const DEVICE_KEY = 'dio-slotting-device-id-v1';
 const CLAIM_REFRESH_MS = 60_000;
 const NEXT_TASK_DELAY_MS = 1_200;
 const NO_WORK_REFRESH_MS = 5_000;
+const MISMATCH_WARNING_MS = 1_500;
 
 async function sbFetch(path, options = {}) {
   const controller = new AbortController();
@@ -56,6 +57,7 @@ const deviceId = getDeviceId();
 const app = document.getElementById('app');
 let claimTimer = null;
 let noWorkTimer = null;
+let failureReturnTimer = null;
 let stepHandler = null;
 let state = initialState();
 
@@ -111,6 +113,7 @@ function dots(active) {
 }
 
 function render() {
+  if (state.screen !== 'FAIL') clearFailureReturnTimer();
   stepHandler = null;
   document.body.className = '';
   switch (state.screen) {
@@ -277,18 +280,37 @@ function submitScan(input, handler) {
   if (value) handler(value);
 }
 
-function showFailure(title, detail, returnScreen) {
+function clearFailureReturnTimer() {
+  clearTimeout(failureReturnTimer);
+  failureReturnTimer = null;
+}
+
+function showFailure(title, detail, returnScreen, autoReturnMs = null) {
+  clearFailureReturnTimer();
   playFailFeedback();
   state.failTitle = title;
   state.failDetail = detail;
   state.failReturn = returnScreen;
   state.screen = 'FAIL';
   render();
+  if (autoReturnMs === null) return;
+
+  failureReturnTimer = setTimeout(() => {
+    failureReturnTimer = null;
+    if (state.screen !== 'FAIL' || state.failReturn !== returnScreen) return;
+    state.screen = returnScreen;
+    render();
+  }, autoReturnMs);
 }
 
 function handleFromScan(rawValue) {
   if (!isExpectedLocation(rawValue, state.mapping.from_location)) {
-    showFailure('FROM 로케이션 불일치', `스캔값: ${rawValue}`, 'FROM');
+    showFailure(
+      'FROM 로케이션 불일치',
+      `스캔값: ${rawValue}`,
+      'FROM',
+      MISMATCH_WARNING_MS,
+    );
     return;
   }
   playPassFeedback();
@@ -298,7 +320,12 @@ function handleFromScan(rawValue) {
 
 function handleItemScan(rawValue) {
   if (!isExpectedItem(rawValue, state.mapping.item_code)) {
-    showFailure('품번 불일치', `스캔값: ${rawValue}`, 'ITEM');
+    showFailure(
+      '품번 불일치',
+      `스캔값: ${rawValue}`,
+      'ITEM',
+      MISMATCH_WARNING_MS,
+    );
     return;
   }
   playPassFeedback();
@@ -312,7 +339,12 @@ async function handleToScan(rawValue) {
   const targets = pendingTargets(state.mapping, state.completedLocations);
   const target = targets.find(candidate => isExpectedLocation(rawValue, candidate.location));
   if (!target) {
-    showFailure('TO 로케이션 불일치', `스캔값: ${rawValue}`, 'TO');
+    showFailure(
+      'TO 로케이션 불일치',
+      `스캔값: ${rawValue}`,
+      'TO',
+      MISMATCH_WARNING_MS,
+    );
     return;
   }
 

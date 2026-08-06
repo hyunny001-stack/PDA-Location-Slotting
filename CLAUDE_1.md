@@ -197,61 +197,45 @@ function parseLocations(input) {
 
 ### 2. PDA 스캔 플로우 (`pda.js`)
 
-**작업자는 품번 QR 또는 From 로케이션 QR 중 어느 것을 먼저 찍어도 됨**
+**PDA가 대기 작업 한 건을 자동 선점하고 작업자에게 이동 순서를 안내함**
 
 ```
-[STEP 1] 첫 QR 스캔 (품번 OR From 로케이션)
+[자동 배정]
+  → claim_next_item_mapping RPC가 active 작업 한 건을 원자적으로 선점
+  → 같은 브라우저는 새로고침 후에도 기존 작업을 이어서 받음
+  → 15분간 갱신되지 않은 작업은 다른 PDA가 다시 선점 가능
 
-  → 스캔값으로 두 가지 DB 조회 병렬 시도:
-  → 매핑 확인 후 placement_logs에서 이미 완료된 로케이션 복원 (앱 재시작 대응)
+[STEP 1 · FROM]
+  → 시스템이 FROM 로케이션을 크게 표시
+  → 작업자는 해당 위치로 이동해 FROM QR 스캔
 
-    (A) item_code = 스캔값 조회 성공  → 품번 QR로 판단
-          → STEP 2 진입 (대기 중인 TO 로케이션+수량 목록 표시)
+[STEP 2 · 품번]
+  → 시스템이 품번과 총 이동 수량을 표시
+  → 작업자는 품번 QR 스캔
 
-    (B) from_location = 스캔값 조회 성공  → From 로케이션 QR로 판단
-          → STEP 2 직행 (STEP 2 = 대기 TO 목록)
-
-    (C) 둘 다 없음  → "매핑 없음" 안내, 재스캔 대기
-
-[STEP 2] TO 로케이션 목록 확인 + QR 스캔
-
-  화면 구성:
-  - FROM: [from_location]
-  - 대기 중인 TO 로케이션 목록 (완료된 것은 자동 제거됨)
-  - 각 로케이션옆 qty_per_location 수량 표시
-  - 총 로케이션수 / 총 수량 요약
-
-  TO 로케이션 QR 스캔 시:
-    (1) 유효한 로케이션 + 미완료  → PASS 피드백
-        - 해당 로케이션을 completedLocations에 추가
-        - 목록에서 제거 + 카운트 감소
-        - 미완료 있으면 → STEP 2 재렌더링 (계속 스캔)
-        - 모두 완료 시 → 전체 완료 화면
-
-    (2) 유효한 로케이션 + 이미 완료 (중복 적치)  → FAIL
-        - "이미 적치된 로케이션!" 경고
-        - placement_logs 저장(result='fail')
-
-    (3) 유효하지 않은 로케이션 (오적치)  → FAIL
-        - "잘못된 적치 위치!" 경고
-        - placement_logs 저장(result='fail')
+[STEP 3 · TO]
+  → 시스템이 남은 TO 로케이션별 수량을 표시
+  → 작업자는 TO로 이동해 TO QR 스캔
+  → placement_logs 저장 ACK 확인 후 완료 처리
+  → 모든 TO 완료 시 item_mappings를 completed로 변경
+  → 완료 화면 후 다음 작업을 자동 배정
 ```
 
 **중요 규칙**:
 - FAIL 시 해당 스텝 재스캔, 다음 단계 진입 차단
-- `[← 처음부터]` 버튼으로 STEP 1 복귀 항상 가능
-- 앱 재시작 후 같은 품번 스캔 시: DB에서 이미 완료된 로케이션 자동 복원 → 남은 목록만 표시
+- PDA별 선점으로 다수 작업자의 동일 작업 중복 수행 방지
+- 완료 로그 저장 실패 시 성공 화면을 표시하지 않음
+- 작업이 없을 때 5초마다 자동 재조회
+- 앱 재시작 시 같은 PDA의 미완료 작업과 완료된 TO 이력을 복원
 
 **state 구조**:
 ```javascript
 {
-  screen: 'STEP1' | 'STEP3' | 'STEP3_FAIL' | 'PASS',
-  currentMapping: null,          // 단일 매핑
-  allMappings: null,             // 복수 매핑 (품번→여러 From)
+  screen: 'LOADING' | 'NO_WORK' | 'FROM' | 'ITEM' | 'TO' | 'FAIL' | 'PASS',
+  mapping: null,                 // 현재 PDA가 선점한 단일 매핑
   passResult: null,
-  step3FailScan: null,
-  completedLocations: new Set(), // 완료된 TO 로케이션 (소문자)
-  failReason: null,              // 'wrong' | 'duplicate'
+  completedLocations: new Set(), // 완료된 TO 로케이션
+  failReturn: 'FROM' | 'ITEM' | 'TO',
 }
 ```
 
@@ -503,14 +487,16 @@ Phase 4: 검증
 
 | 시나리오 | 기대 결과 |
 |----------|---------|
-| 품번 QR 스캔 | STEP 2 진입, 대기 중인 TO 로케이션+수량 목록 표시 |
-| TO aa-01-109 스캔 (유효, 미완료) | 목록에서 aa-01-109 제거, 카운트 1 감소, PASS 피드백 |
-| TO aa-01-109 재스캔 (중복) | FAIL + "이미 적치된 로케이션!" 경고 |
-| TO aa-01-115 스캔 (유효하지 않음) | FAIL + "잘못된 적치 위치!" + 재스캔 유도 |
-| 마지막 로케이션 스캔 | "전체 적치 완료!" 화면 표시 |
-| 앱 재시작 후 같은 품번 스캔 | DB에서 완료 이력 복원, 남은 로케이션만 표시 |
-| From 로케이션 QR 직접 스캔 | STEP 2 직행, TO 목록+수량 표시 |
-| 매핑 미등록 QR 스캔 | "매핑 없음" 안내 |
+| PDA 접속 | active 작업 한 건 자동 선점, FROM 안내 |
+| PDA 2대 동시 접속 | 서로 다른 active 작업 배정 |
+| 잘못된 FROM 스캔 | FAIL + "FROM 로케이션 불일치" |
+| 올바른 FROM 스캔 | 품번과 이동 수량 표시 |
+| 잘못된 품번 스캔 | FAIL + "품번 불일치" |
+| 올바른 품번 스캔 | TO 로케이션별 수량 표시 |
+| 잘못된 TO 스캔 | FAIL + "TO 로케이션 불일치" |
+| 마지막 TO 스캔 | 저장 ACK 후 완료, 다음 작업 자동 배정 |
+| 앱 재시작 | 같은 PDA의 미완료 작업과 완료 TO 복원 |
+| 대기 작업 없음 | 안내 표시 후 5초마다 자동 재조회 |
 | Excel — 수량 0 또는 문자 입력 | ⚠️ 오류, 저장 차단 |
 | Excel — 품번 누락 행 포함 | ⚠️ 오류, 저장 차단 |
 | Excel — 중복 (품번+From) 행 포함 | ⚠️ 오류, 저장 차단 |

@@ -166,6 +166,8 @@ saveBtn.addEventListener('click', async () => {
     to_quantities: g.to_quantities,
     to_display:    g.to_locations.join(', '),
     status:        'active',
+    claimed_by:    null,
+    claimed_at:    null,
     updated_at:    new Date().toISOString(),
   }));
 
@@ -343,7 +345,12 @@ async function deleteMapping(id, itemCode, fromLocation) {
 async function updateStatus(id, status) {
   const { error } = await supabase
     .from('item_mappings')
-    .update({ status, updated_at: new Date().toISOString() })
+    .update({
+      status,
+      claimed_by: null,
+      claimed_at: null,
+      updated_at: new Date().toISOString(),
+    })
     .eq('id', id);
 
   if (error) { alert('상태 변경 실패: ' + error.message); return; }
@@ -361,7 +368,12 @@ bulkCompleteBtn.addEventListener('click', async () => {
   if (!confirm(`선택한 ${ids.length}건을 완료처리하시겠습니까?`)) return;
   const { error } = await supabase
     .from('item_mappings')
-    .update({ status: 'completed', updated_at: new Date().toISOString() })
+    .update({
+      status: 'completed',
+      claimed_by: null,
+      claimed_at: null,
+      updated_at: new Date().toISOString(),
+    })
     .in('id', ids);
   if (error) { alert('완료처리 실패: ' + error.message); return; }
   loadDashboard();
@@ -378,7 +390,12 @@ bulkStatusSelect.addEventListener('change', async () => {
   if (!confirm(`선택한 ${ids.length}건을 '${status}'로 변경하시겠습니까?`)) return;
   const { error } = await supabase
     .from('item_mappings')
-    .update({ status, updated_at: new Date().toISOString() })
+    .update({
+      status,
+      claimed_by: null,
+      claimed_at: null,
+      updated_at: new Date().toISOString(),
+    })
     .in('id', ids);
   if (error) { alert('상태 변경 실패: ' + error.message); return; }
   loadDashboard();

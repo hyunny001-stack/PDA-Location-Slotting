@@ -206,6 +206,68 @@ body.status-fail { background: #ef4444; }
 /* ── 스페이서 ── */
 .spacer { flex: 1; }
 
+.loading-spinner {
+  width: 52px;
+  height: 52px;
+  margin: 0 auto;
+  border: 6px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.task-location-card,
+.task-item-card {
+  border: 3px solid white;
+  border-radius: 14px;
+  padding: 20px 16px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.task-card-label {
+  margin-bottom: 8px;
+  font-size: 16px;
+  opacity: 0.8;
+}
+
+.task-card-value {
+  font-size: clamp(36px, 11vw, 58px);
+  line-height: 1.15;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+}
+
+.task-item-value {
+  font-size: clamp(25px, 7vw, 38px);
+  line-height: 1.2;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.task-quantity {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.35);
+  font-size: 20px;
+}
+
+.confirmed-from {
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.18);
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.pass-route {
+  margin-top: 10px;
+  font-size: 20px;
+}
+
 /* ── STEP 2: FROM 헤더 박스 ── */
 .from-header-box {
   border: 2px solid white;

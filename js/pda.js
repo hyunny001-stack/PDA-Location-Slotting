@@ -3,7 +3,10 @@ import { CONFIG } from './config.js';
 import {
   isExpectedItem,
   isExpectedLocation,
+  itemFirstCandidates,
+  itemFirstDecision,
   normalizeLocation,
+  parseItemCode,
   pendingTargets,
 } from './taskFlow.js';
 
@@ -59,16 +62,20 @@ let claimTimer = null;
 let noWorkTimer = null;
 let failureReturnTimer = null;
 let stepHandler = null;
+let scanLocked = false;
 let state = initialState();
 
-function initialState() {
+function initialState(mode = 'ITEM_FIRST') {
   return {
-    screen: 'LOADING',
+    mode,
+    screen: mode === 'ITEM_FIRST' ? 'ITEM_FIRST' : 'LOADING',
     mapping: null,
+    itemCandidates: [],
+    scannedItemCode: '',
     completedLocations: new Set(),
     failTitle: '',
     failDetail: '',
-    failReturn: 'FROM',
+    failReturn: mode === 'ITEM_FIRST' ? 'ITEM_FIRST' : 'FROM',
     passResult: null,
   };
 }
@@ -81,7 +88,7 @@ document.addEventListener('touchstart', () => {
 let globalBuffer = '';
 let globalTimer = null;
 document.addEventListener('keydown', event => {
-  if (document.activeElement?.id === 'scanInput' || !stepHandler) return;
+  if (scanLocked || document.activeElement?.id === 'scanInput' || !stepHandler) return;
   if (event.ctrlKey || event.altKey || event.metaKey) return;
   if (event.key === 'Enter' || event.key === 'Tab' || event.keyCode === 13 || event.keyCode === 9) {
     event.preventDefault();
@@ -106,6 +113,16 @@ function scanInput(placeholder = 'QR 스캔 대기 중...') {
     autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">`;
 }
 
+function disableInteractiveControls() {
+  scanLocked = true;
+  stepHandler = null;
+  globalBuffer = '';
+  clearTimeout(globalTimer);
+  document.querySelectorAll('button, input').forEach(element => {
+    element.disabled = true;
+  });
+}
+
 function dots(active) {
   return `<div class="step-dots">
     ${[1, 2, 3].map(step => `<div class="dot${active >= step ? ' active' : ''}"></div>`).join('')}
@@ -117,6 +134,8 @@ function render() {
   stepHandler = null;
   document.body.className = '';
   switch (state.screen) {
+    case 'ITEM_FIRST': renderItemFirst(); break;
+    case 'FROM_SELECT': renderFromSelect(); break;
     case 'LOADING': renderLoading(); break;
     case 'NO_WORK': renderNoWork(); break;
     case 'SETUP_ERROR': renderSetupError(); break;
@@ -126,6 +145,42 @@ function render() {
     case 'FAIL': renderFail(); break;
     case 'PASS': renderPass(); break;
   }
+}
+
+function renderItemFirst() {
+  stopNoWorkPolling();
+  app.innerHTML = `
+    <div class="app-header"><span class="step-label">일반 이동 · 품번 우선</span></div>
+    <div class="guide-text">피킹한 품번 QR을 스캔하세요</div>
+    <div class="sub-text">이동할 FROM·TO·수량을 확인한 뒤 바로 처리할 수 있습니다.</div>
+    ${scanInput('품번 QR 스캔 대기 중...')}
+    <div class="spacer"></div>
+    <button class="btn-reset" id="guidedModeBtn">FROM 안내형 이동 (1건)</button>`;
+  document.getElementById('guidedModeBtn').addEventListener('click', () => {
+    disableInteractiveControls();
+    loadNextTask();
+  });
+  bindScan(handleItemFirstScan);
+}
+
+function renderFromSelect() {
+  const rows = state.itemCandidates.map(mapping => {
+    const totalQuantity = (mapping.to_quantities ?? [])
+      .reduce((sum, quantity) => sum + (quantity ?? 0), 0);
+    return `<li><strong>${esc(mapping.from_location)}</strong>
+      <span>${totalQuantity > 0 ? `${totalQuantity.toLocaleString()}개` : '수량 확인 필요'}</span></li>`;
+  }).join('');
+  app.innerHTML = `
+    <div class="app-header"><span class="step-label">일반 이동 · FROM 선택</span></div>
+    <div class="confirmed-from">품번 ${esc(state.scannedItemCode)}</div>
+    <div class="guide-text">출발지가 여러 곳입니다</div>
+    <ul class="candidate-list">${rows}</ul>
+    <div class="sub-text">피킹한 재고의 FROM 로케이션 QR을 스캔하세요.</div>
+    ${scanInput('FROM QR 스캔 대기 중...')}
+    <div class="spacer"></div>
+    <button class="btn-reset" id="itemFirstBackBtn">품번 다시 스캔</button>`;
+  document.getElementById('itemFirstBackBtn').addEventListener('click', resetItemFirst);
+  bindScan(handleFromSelectionScan);
 }
 
 function renderLoading() {
@@ -228,10 +283,14 @@ function renderFail() {
     <div class="sub-text" style="text-align:center">올바른 QR을 다시 스캔하세요</div>
     ${scanInput()}
     <div class="spacer"></div>`;
-  bindScan(
-    state.failReturn === 'FROM' ? handleFromScan :
-      state.failReturn === 'ITEM' ? handleItemScan : handleToScan,
-  );
+  const failureHandlers = {
+    ITEM_FIRST: handleItemFirstScan,
+    FROM_SELECT: handleFromSelectionScan,
+    FROM: handleFromScan,
+    ITEM: handleItemScan,
+    TO: handleToScan,
+  };
+  bindScan(failureHandlers[state.failReturn] ?? handleToScan);
 }
 
 function renderPass() {
@@ -243,11 +302,12 @@ function renderPass() {
     <div class="result-detail pass-route">
       ${esc(state.passResult.from)} → ${esc(state.passResult.to)}
     </div>
-    <div class="sub-text" style="text-align:center">다음 작업을 자동으로 불러옵니다</div>
+    <div class="sub-text" style="text-align:center">다음 품번을 스캔할 수 있도록 돌아갑니다</div>
     <div class="spacer"></div>`;
 }
 
 function bindScan(handler) {
+  scanLocked = false;
   stepHandler = handler;
   const input = document.getElementById('scanInput');
   if (!input) return;
@@ -303,6 +363,107 @@ function showFailure(title, detail, returnScreen, autoReturnMs = null) {
   }, autoReturnMs);
 }
 
+async function handleItemFirstScan(rawValue) {
+  disableInteractiveControls();
+  const input = document.getElementById('scanInput');
+  if (input) input.disabled = true;
+  const itemCode = parseItemCode(rawValue);
+  if (!itemCode) {
+    showFailure('품번을 확인할 수 없습니다', `스캔값: ${rawValue}`, 'ITEM_FIRST');
+    return;
+  }
+
+  const safe = itemCode.replace(/[%_\\]/g, '\\$&');
+  const encoded = encodeURIComponent(safe);
+  const { data, error } = await withRetry(() => sbFetch(
+    `item_mappings?select=*&item_code=ilike.${encoded}&status=eq.active&order=from_location.asc`,
+  ));
+  if (error) {
+    showFailure('이동지시 조회 실패', '네트워크를 확인하고 품번을 다시 스캔하세요', 'ITEM_FIRST');
+    return;
+  }
+
+  const candidates = itemFirstCandidates(data, rawValue);
+  const decision = itemFirstDecision(candidates);
+  if (decision === 'NO_MATCH') {
+    showFailure('이동지시 없음', `품번: ${itemCode}`, 'ITEM_FIRST');
+    return;
+  }
+
+  state.scannedItemCode = itemCode;
+  state.itemCandidates = candidates;
+  if (decision === 'REQUIRE_FROM') {
+    playPassFeedback();
+    state.screen = 'FROM_SELECT';
+    render();
+    return;
+  }
+
+  await claimItemFirstMapping(
+    itemCode,
+    candidates[0].from_location,
+    'ITEM_FIRST',
+  );
+}
+
+async function handleFromSelectionScan(rawValue) {
+  disableInteractiveControls();
+  const candidate = state.itemCandidates.find(mapping =>
+    isExpectedLocation(rawValue, mapping.from_location),
+  );
+  if (!candidate) {
+    showFailure(
+      'FROM 로케이션 불일치',
+      `스캔값: ${rawValue}`,
+      'FROM_SELECT',
+      MISMATCH_WARNING_MS,
+    );
+    return;
+  }
+  await claimItemFirstMapping(
+    state.scannedItemCode,
+    candidate.from_location,
+    'FROM_SELECT',
+  );
+}
+
+async function claimItemFirstMapping(itemCode, fromLocation, returnScreen) {
+  const input = document.getElementById('scanInput');
+  if (input) input.disabled = true;
+  const { data, error } = await withRetry(() => sbFetch('rpc/claim_item_mapping_by_item', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_device_id: deviceId,
+      p_item_code: itemCode,
+      p_from_location: fromLocation,
+    }),
+  }));
+  if (error) {
+    showFailure('작업 선점 실패', '관리자에게 품번 우선 이동 DB 설정을 확인해 달라고 요청하세요', returnScreen);
+    return;
+  }
+
+  const mapping = Array.isArray(data) ? data[0] : data;
+  if (!mapping) {
+    showFailure('다른 PDA에서 작업 중', '잠시 후 품번을 다시 스캔하세요', returnScreen);
+    return;
+  }
+
+  state.mapping = mapping;
+  try {
+    await loadCompletedLocations(mapping.id);
+  } catch (loadError) {
+    console.error('완료 이력 조회 실패:', loadError);
+    showFailure('완료 이력 조회 실패', '네트워크를 확인하고 다시 스캔하세요', returnScreen);
+    return;
+  }
+  state.itemCandidates = [];
+  playPassFeedback();
+  state.screen = 'TO';
+  startClaimHeartbeat();
+  render();
+}
+
 function handleFromScan(rawValue) {
   if (!isExpectedLocation(rawValue, state.mapping.from_location)) {
     showFailure(
@@ -334,6 +495,7 @@ function handleItemScan(rawValue) {
 }
 
 async function handleToScan(rawValue) {
+  disableInteractiveControls();
   const input = document.getElementById('scanInput');
   if (input) input.disabled = true;
   const targets = pendingTargets(state.mapping, state.completedLocations);
@@ -393,7 +555,7 @@ async function handleToScan(rawValue) {
   };
   state.screen = 'PASS';
   render();
-  setTimeout(loadNextTask, NEXT_TASK_DELAY_MS);
+  setTimeout(resetItemFirst, NEXT_TASK_DELAY_MS);
 }
 
 async function loadCompletedLocations(mappingId) {
@@ -413,10 +575,17 @@ async function claimNextTask() {
   }));
 }
 
+function resetItemFirst() {
+  stopClaimHeartbeat();
+  stopNoWorkPolling();
+  state = initialState('ITEM_FIRST');
+  render();
+}
+
 async function loadNextTask() {
   stopClaimHeartbeat();
   stopNoWorkPolling();
-  state = initialState();
+  state = initialState('GUIDED');
   render();
   const { data, error } = await claimNextTask();
   if (error) {
@@ -488,4 +657,4 @@ function esc(value) {
     .replace(/>/g, '&gt;');
 }
 
-loadNextTask();
+resetItemFirst();

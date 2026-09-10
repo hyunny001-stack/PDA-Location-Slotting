@@ -39,31 +39,6 @@ export function isExpectedItem(scanned, expected) {
     String(expected ?? '').trim().toLocaleUpperCase('en-US');
 }
 
-export function itemFirstCandidates(mappings, rawItemCode) {
-  return [...(mappings ?? [])]
-    .filter(mapping =>
-      mapping?.status === 'active' &&
-      isExpectedItem(rawItemCode, mapping.item_code),
-    )
-    .sort((left, right) => {
-      const fromOrder = normalizeLocation(left.from_location)
-        .localeCompare(normalizeLocation(right.from_location), 'en-US');
-      if (fromOrder !== 0) return fromOrder;
-      return String(left.id ?? '').localeCompare(String(right.id ?? ''), 'en-US');
-    });
-}
-
-export function itemFirstDecision(candidates) {
-  if ((candidates?.length ?? 0) === 0) return 'NO_MATCH';
-  if (candidates.length === 1) return 'CLAIM_DIRECT';
-  return 'REQUIRE_FROM';
-}
-
-export function resolvePdaMode(search = '') {
-  const params = new URLSearchParams(String(search ?? ''));
-  return params.get('mode') === 'item-first' ? 'ITEM_FIRST' : 'GUIDED';
-}
-
 export function pendingTargets(mapping, completedLocations) {
   const completed = new Set(
     [...completedLocations].map(location => normalizeLocation(location)),

@@ -59,6 +59,11 @@ export function itemFirstDecision(candidates) {
   return 'REQUIRE_FROM';
 }
 
+export function resolvePdaMode(search = '') {
+  const params = new URLSearchParams(String(search ?? ''));
+  return params.get('mode') === 'item-first' ? 'ITEM_FIRST' : 'GUIDED';
+}
+
 export function pendingTargets(mapping, completedLocations) {
   const completed = new Set(
     [...completedLocations].map(location => normalizeLocation(location)),

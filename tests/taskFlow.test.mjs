@@ -2,14 +2,12 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-import * as taskFlow from '../js/taskFlow.js';
-
-const {
+import {
   isExpectedItem,
   isExpectedLocation,
   parseItemCode,
   pendingTargets,
-} = taskFlow;
+} from '../js/taskFlow.js';
 
 test('로케이션은 대소문자와 앞뒤 공백을 무시해 검증한다', () => {
   assert.equal(isExpectedLocation(' cb-10-503 ', 'CB-10-503'), true);
@@ -32,125 +30,54 @@ test('완료된 TO를 제외하고 남은 로케이션과 수량만 반환한다
   ]);
 });
 
-test('품번 우선 후보는 스캔한 품번의 active 작업만 FROM 순서로 반환한다', () => {
-  assert.equal(typeof taskFlow.itemFirstCandidates, 'function');
-  const mappings = [
-    { id: '2', item_code: '110005-010146CN', from_location: 'CB-02', status: 'active' },
-    { id: 'x', item_code: '110005-010143CN', from_location: 'CB-00', status: 'active' },
-    { id: '3', item_code: '110005-010146CN', from_location: 'CB-03', status: 'completed' },
-    { id: '1', item_code: '110005-010146CN', from_location: 'CB-01', status: 'active' },
-  ];
-
-  assert.deepEqual(
-    taskFlow.itemFirstCandidates(mappings, '110005-010146CN+LOT').map(({ id }) => id),
-    ['1', '2'],
-  );
-});
-
-test('품번 후보 한 건은 바로 선점하고 여러 FROM은 출발지 확인을 요구한다', () => {
-  assert.equal(typeof taskFlow.itemFirstDecision, 'function');
-  assert.equal(taskFlow.itemFirstDecision([]), 'NO_MATCH');
-  assert.equal(taskFlow.itemFirstDecision([{ id: '1' }]), 'CLAIM_DIRECT');
-  assert.equal(
-    taskFlow.itemFirstDecision([{ id: '1' }, { id: '2' }]),
-    'REQUIRE_FROM',
-  );
-});
-
-test('품번 우선 선점 SQL은 active lease와 행 잠금을 함께 강제한다', async () => {
-  const sql = await readFile(
-    new URL('../sql/20260908_add_item_first_claim.sql', import.meta.url),
-    'utf8',
-  ).catch(() => '');
-
-  assert.match(sql, /claim_item_mapping_by_item/i);
-  assert.match(sql, /mapping\.status\s*=\s*'active'/i);
-  assert.match(sql, /claimed_at\s*<\s*now\(\)\s*-\s*interval\s*'15 minutes'/i);
-  assert.match(sql, /FOR UPDATE SKIP LOCKED/i);
-  assert.match(sql, /lower\(trim\(mapping\.item_code\)\)/i);
-  assert.match(sql, /lower\(trim\(mapping\.from_location\)\)/i);
-});
-
-test('일괄 자동배정 SQL은 다중 PDA를 서로 다른 작업으로 직렬화한다', async () => {
-  const schema = await readFile(new URL('../sql/schema.sql', import.meta.url), 'utf8');
-  const claimNext = schema.match(
-    /CREATE OR REPLACE FUNCTION claim_next_item_mapping[\s\S]*?\$\$;/i,
-  )?.[0] ?? '';
-
-  assert.match(claimNext, /mapping\.status\s*=\s*'active'/i);
-  assert.match(claimNext, /CASE WHEN mapping\.claimed_by = p_device_id THEN 0 ELSE 1 END/i);
-  assert.match(claimNext, /mapping\.from_location/i);
-  assert.match(claimNext, /FOR UPDATE SKIP LOCKED/i);
-  assert.match(claimNext, /LIMIT 1/i);
-});
-
-test('PDA 기본 화면은 일괄 작업을 자동 순차배정하고 품번 우선은 명시적 보조모드다', async () => {
-  assert.equal(typeof taskFlow.resolvePdaMode, 'function');
-  assert.equal(taskFlow.resolvePdaMode(''), 'GUIDED');
-  assert.equal(taskFlow.resolvePdaMode('?mode=guided'), 'GUIDED');
-  assert.equal(taskFlow.resolvePdaMode('?mode=item-first'), 'ITEM_FIRST');
-
+test('PDA는 최초설계대로 품번 스캔 후 FROM 스캔 없이 TO 이동지침을 표시한다', async () => {
   const source = await readFile(new URL('../js/pda.js', import.meta.url), 'utf8');
-  assert.match(source, /function initialState\(mode = 'GUIDED'\)/);
-  assert.match(source, /const startupMode = resolvePdaMode\(globalThis\.location\?\.search\)/);
-  assert.match(source, /startupMode === 'ITEM_FIRST' \? resetItemFirst\(\) : loadNextTask\(\)/);
-  assert.match(source, /state\.mode === 'GUIDED' \? loadNextTask : resetItemFirst/);
-  assert.match(source, /일괄 자동배정 모드로 전환/);
-  assert.match(source, /function renderItemFirst\(/);
-  assert.match(source, /case 'FROM_SELECT':\s*renderFromSelect\(\)/);
-  assert.match(source, /rpc\/claim_item_mapping_by_item/);
+
+  assert.match(source, /screen:\s*'STEP1'/);
+  assert.match(source, /품번 QR을/);
+  assert.match(source, /item_code=ilike\.\$\{enc\}&status=eq\.active/);
+  assert.match(source, /state\.allMappings\s*=\s*byItem\.data/);
+  assert.match(source, /state\.screen\s*=\s*'STEP3'/);
+  assert.doesNotMatch(source, /from_location=ilike/);
+  assert.doesNotMatch(source, /claim_next_item_mapping/);
+  assert.doesNotMatch(source, /claim_item_mapping_by_item/);
+  assert.doesNotMatch(source, /FROM 로케이션 QR을 스캔하세요/);
+  assert.doesNotMatch(source, /guidedModeBtn|resolvePdaMode|FROM_SELECT/);
 });
 
-test('다중 FROM 목록 스타일과 자동 순차배정 PDA 캐시 버전을 배포한다', async () => {
-  const [css, html] = await Promise.all([
-    readFile(new URL('../css/style.css', import.meta.url), 'utf8'),
-    readFile(new URL('../index.html', import.meta.url), 'utf8'),
+test('동일 품번의 여러 FROM과 TO를 한 화면에 합쳐 수량과 함께 안내한다', async () => {
+  const source = await readFile(new URL('../js/pda.js', import.meta.url), 'utf8');
+
+  assert.match(source, /fromDisplay\s*=\s*\[\.\.\.new Set\(state\.allMappings\.map/);
+  assert.match(source, /allToLocs\s*=\s*state\.allMappings\.flatMap/);
+  assert.match(source, /qtyMap\s*=\s*buildQtyMap\(state\.allMappings\)/);
+  assert.match(source, /총 로케이션수/);
+  assert.match(source, /총 수량/);
+  assert.match(source, /이동 로케이션 QR을 스캔하세요/);
+});
+
+test('완료 후 다음 작업은 자동배정하지 않고 다음 품번 스캔으로 돌아간다', async () => {
+  const source = await readFile(new URL('../js/pda.js', import.meta.url), 'utf8');
+
+  assert.match(source, /id="nextBtn">다음 작업/);
+  assert.match(source, /nextBtn'\)\.addEventListener\('click', resetToStep1\)/);
+  assert.doesNotMatch(source, /setTimeout\([^\n]*loadNextTask/);
+});
+
+test('자동배정과 모드선택 보조로직은 PDA 실행코드에서 제거한다', async () => {
+  const [pda, taskFlow] = await Promise.all([
+    readFile(new URL('../js/pda.js', import.meta.url), 'utf8'),
+    readFile(new URL('../js/taskFlow.js', import.meta.url), 'utf8'),
   ]);
 
-  assert.match(css, /\.candidate-list\s*\{/);
-  assert.match(html, /css\/style\.css\?v=20260910a/);
-  assert.match(html, /js\/pda\.js\?v=20260910a/);
-
-  const pda = await readFile(new URL('../js/pda.js', import.meta.url), 'utf8');
-  assert.match(pda, /from '\.\/taskFlow\.js\?v=20260910a';/);
+  assert.doesNotMatch(pda, /claim_next_item_mapping|claim_item_mapping_by_item/);
+  assert.doesNotMatch(pda, /guidedModeBtn|resolvePdaMode|FROM_SELECT/);
+  assert.doesNotMatch(taskFlow, /itemFirstCandidates|itemFirstDecision|resolvePdaMode/);
 });
 
-test('비동기 선점 중 모드 전환을 막고 조회한 단일 FROM을 고정한다', async () => {
-  const source = await readFile(new URL('../js/pda.js', import.meta.url), 'utf8');
+test('품번우선 전용 PDA 캐시 버전을 배포한다', async () => {
+  const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
 
-  assert.match(source, /function disableInteractiveControls\(\)/);
-  assert.match(source, /guidedModeBtn[\s\S]{0,180}disableInteractiveControls\(\)/);
-  assert.match(source, /async function handleItemFirstScan[\s\S]{0,180}disableInteractiveControls\(\)/);
-  assert.match(
-    source,
-    /claimItemFirstMapping\([\s\S]{0,100}itemCode,[\s\S]{0,100}candidates\[0\]\.from_location,[\s\S]{0,100}'ITEM_FIRST'/,
-  );
-});
-
-test('완료이력 실패 재시도는 후보를 보존하고 완료 후 현재 모드의 다음 작업으로 이어간다', async () => {
-  const source = await readFile(new URL('../js/pda.js', import.meta.url), 'utf8');
-  const historyLoad = source.indexOf('await loadCompletedLocations(mapping.id)');
-  const candidateClear = source.indexOf('state.itemCandidates = [];', historyLoad);
-
-  assert.ok(historyLoad >= 0);
-  assert.ok(candidateClear > historyLoad);
-  assert.match(source, /setTimeout\(state\.mode === 'GUIDED' \? loadNextTask : resetItemFirst, NEXT_TASK_DELAY_MS\)/);
-});
-
-test('신규 설치용 전체 스키마도 품번 우선 선점 RPC를 포함한다', async () => {
-  const schema = await readFile(new URL('../sql/schema.sql', import.meta.url), 'utf8');
-  assert.match(schema, /CREATE OR REPLACE FUNCTION claim_item_mapping_by_item/i);
-});
-
-test('비동기 처리 중 문서 스캐너 재진입과 TO 중복 저장을 차단한다', async () => {
-  const source = await readFile(new URL('../js/pda.js', import.meta.url), 'utf8');
-
-  assert.match(source, /let scanLocked = false;/);
-  assert.match(source, /document\.addEventListener\('keydown',[\s\S]{0,180}if \(scanLocked \|\|/);
-  assert.match(
-    source,
-    /function disableInteractiveControls\(\)[\s\S]{0,220}scanLocked = true;[\s\S]{0,220}stepHandler = null;/,
-  );
-  assert.match(source, /function bindScan\(handler\)[\s\S]{0,100}scanLocked = false;/);
-  assert.match(source, /async function handleToScan[\s\S]{0,120}disableInteractiveControls\(\)/);
+  assert.match(html, /js\/pda\.js\?v=20260910b/);
+  assert.doesNotMatch(html, /mode=item-first|mode=guided/);
 });

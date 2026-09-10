@@ -71,26 +71,48 @@ test('품번 우선 선점 SQL은 active lease와 행 잠금을 함께 강제한
   assert.match(sql, /lower\(trim\(mapping\.from_location\)\)/i);
 });
 
-test('PDA 기본 화면은 품번 우선이며 안내형 이동은 별도 선택으로 남는다', async () => {
-  const source = await readFile(new URL('../js/pda.js', import.meta.url), 'utf8');
+test('일괄 자동배정 SQL은 다중 PDA를 서로 다른 작업으로 직렬화한다', async () => {
+  const schema = await readFile(new URL('../sql/schema.sql', import.meta.url), 'utf8');
+  const claimNext = schema.match(
+    /CREATE OR REPLACE FUNCTION claim_next_item_mapping[\s\S]*?\$\$;/i,
+  )?.[0] ?? '';
 
-  assert.match(source, /function initialState\(mode = 'ITEM_FIRST'\)/);
-  assert.match(source, /screen:\s*mode === 'ITEM_FIRST' \? 'ITEM_FIRST'/);
+  assert.match(claimNext, /mapping\.status\s*=\s*'active'/i);
+  assert.match(claimNext, /CASE WHEN mapping\.claimed_by = p_device_id THEN 0 ELSE 1 END/i);
+  assert.match(claimNext, /mapping\.from_location/i);
+  assert.match(claimNext, /FOR UPDATE SKIP LOCKED/i);
+  assert.match(claimNext, /LIMIT 1/i);
+});
+
+test('PDA 기본 화면은 일괄 작업을 자동 순차배정하고 품번 우선은 명시적 보조모드다', async () => {
+  assert.equal(typeof taskFlow.resolvePdaMode, 'function');
+  assert.equal(taskFlow.resolvePdaMode(''), 'GUIDED');
+  assert.equal(taskFlow.resolvePdaMode('?mode=guided'), 'GUIDED');
+  assert.equal(taskFlow.resolvePdaMode('?mode=item-first'), 'ITEM_FIRST');
+
+  const source = await readFile(new URL('../js/pda.js', import.meta.url), 'utf8');
+  assert.match(source, /function initialState\(mode = 'GUIDED'\)/);
+  assert.match(source, /const startupMode = resolvePdaMode\(globalThis\.location\?\.search\)/);
+  assert.match(source, /startupMode === 'ITEM_FIRST' \? resetItemFirst\(\) : loadNextTask\(\)/);
+  assert.match(source, /state\.mode === 'GUIDED' \? loadNextTask : resetItemFirst/);
+  assert.match(source, /일괄 자동배정 모드로 전환/);
   assert.match(source, /function renderItemFirst\(/);
-  assert.match(source, /id="guidedModeBtn"/);
   assert.match(source, /case 'FROM_SELECT':\s*renderFromSelect\(\)/);
   assert.match(source, /rpc\/claim_item_mapping_by_item/);
 });
 
-test('다중 FROM 목록 스타일과 새 PDA 캐시 버전을 배포한다', async () => {
+test('다중 FROM 목록 스타일과 자동 순차배정 PDA 캐시 버전을 배포한다', async () => {
   const [css, html] = await Promise.all([
     readFile(new URL('../css/style.css', import.meta.url), 'utf8'),
     readFile(new URL('../index.html', import.meta.url), 'utf8'),
   ]);
 
   assert.match(css, /\.candidate-list\s*\{/);
-  assert.match(html, /css\/style\.css\?v=20260908a/);
-  assert.match(html, /js\/pda\.js\?v=20260908a/);
+  assert.match(html, /css\/style\.css\?v=20260910a/);
+  assert.match(html, /js\/pda\.js\?v=20260910a/);
+
+  const pda = await readFile(new URL('../js/pda.js', import.meta.url), 'utf8');
+  assert.match(pda, /from '\.\/taskFlow\.js\?v=20260910a';/);
 });
 
 test('비동기 선점 중 모드 전환을 막고 조회한 단일 FROM을 고정한다', async () => {
@@ -105,14 +127,14 @@ test('비동기 선점 중 모드 전환을 막고 조회한 단일 FROM을 고�
   );
 });
 
-test('완료이력 실패 재시도는 후보를 보존하고 모든 완료는 품번 우선으로 복귀한다', async () => {
+test('완료이력 실패 재시도는 후보를 보존하고 완료 후 현재 모드의 다음 작업으로 이어간다', async () => {
   const source = await readFile(new URL('../js/pda.js', import.meta.url), 'utf8');
   const historyLoad = source.indexOf('await loadCompletedLocations(mapping.id)');
   const candidateClear = source.indexOf('state.itemCandidates = [];', historyLoad);
 
   assert.ok(historyLoad >= 0);
   assert.ok(candidateClear > historyLoad);
-  assert.match(source, /setTimeout\(resetItemFirst, NEXT_TASK_DELAY_MS\)/);
+  assert.match(source, /setTimeout\(state\.mode === 'GUIDED' \? loadNextTask : resetItemFirst, NEXT_TASK_DELAY_MS\)/);
 });
 
 test('신규 설치용 전체 스키마도 품번 우선 선점 RPC를 포함한다', async () => {

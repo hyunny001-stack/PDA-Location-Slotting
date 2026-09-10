@@ -8,7 +8,8 @@ import {
   normalizeLocation,
   parseItemCode,
   pendingTargets,
-} from './taskFlow.js';
+  resolvePdaMode,
+} from './taskFlow.js?v=20260910a';
 
 const DEVICE_KEY = 'dio-slotting-device-id-v1';
 const CLAIM_REFRESH_MS = 60_000;
@@ -58,14 +59,15 @@ function getDeviceId() {
 
 const deviceId = getDeviceId();
 const app = document.getElementById('app');
+const startupMode = resolvePdaMode(globalThis.location?.search);
 let claimTimer = null;
 let noWorkTimer = null;
 let failureReturnTimer = null;
 let stepHandler = null;
 let scanLocked = false;
-let state = initialState();
+let state = initialState(startupMode);
 
-function initialState(mode = 'ITEM_FIRST') {
+function initialState(mode = 'GUIDED') {
   return {
     mode,
     screen: mode === 'ITEM_FIRST' ? 'ITEM_FIRST' : 'LOADING',
@@ -155,7 +157,7 @@ function renderItemFirst() {
     <div class="sub-text">이동할 FROM·TO·수량을 확인한 뒤 바로 처리할 수 있습니다.</div>
     ${scanInput('품번 QR 스캔 대기 중...')}
     <div class="spacer"></div>
-    <button class="btn-reset" id="guidedModeBtn">FROM 안내형 이동 (1건)</button>`;
+    <button class="btn-reset" id="guidedModeBtn">일괄 자동배정 모드로 전환</button>`;
   document.getElementById('guidedModeBtn').addEventListener('click', () => {
     disableInteractiveControls();
     loadNextTask();
@@ -302,7 +304,9 @@ function renderPass() {
     <div class="result-detail pass-route">
       ${esc(state.passResult.from)} → ${esc(state.passResult.to)}
     </div>
-    <div class="sub-text" style="text-align:center">다음 품번을 스캔할 수 있도록 돌아갑니다</div>
+    <div class="sub-text" style="text-align:center">${state.mode === 'GUIDED'
+      ? '다음 이동 작업을 자동으로 불러옵니다'
+      : '다음 품번을 스캔할 수 있도록 돌아갑니다'}</div>
     <div class="spacer"></div>`;
 }
 
@@ -555,7 +559,7 @@ async function handleToScan(rawValue) {
   };
   state.screen = 'PASS';
   render();
-  setTimeout(resetItemFirst, NEXT_TASK_DELAY_MS);
+  setTimeout(state.mode === 'GUIDED' ? loadNextTask : resetItemFirst, NEXT_TASK_DELAY_MS);
 }
 
 async function loadCompletedLocations(mappingId) {
@@ -657,4 +661,4 @@ function esc(value) {
     .replace(/>/g, '&gt;');
 }
 
-resetItemFirst();
+startupMode === 'ITEM_FIRST' ? resetItemFirst() : loadNextTask();

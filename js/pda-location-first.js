@@ -57,6 +57,8 @@ const app = document.getElementById('app');
 let claimTimer = null;
 let noWorkTimer = null;
 let stepHandler = null;
+let claimBlocked = false;
+let claimGeneration = 0;
 let state = initialState();
 
 function initialState() {
@@ -117,6 +119,7 @@ function render() {
     case 'LOADING': renderLoading(); break;
     case 'NO_WORK': renderNoWork(); break;
     case 'SETUP_ERROR': renderSetupError(); break;
+    case 'CLAIM_LOST': renderClaimLost(); break;
     case 'FROM': renderFrom(); break;
     case 'ITEM': renderItem(); break;
     case 'TO': renderTo(); break;
@@ -153,6 +156,18 @@ function renderSetupError() {
     <div class="result-detail">자동 배정 준비가 필요합니다</div>
     <div class="fail-detail">관리자에게 작업 배정 DB 설정을 확인해 달라고 요청하세요.</div>
     <button class="btn-next" id="retryBtn">다시 시도</button>
+    <div class="spacer"></div>`;
+  document.getElementById('retryBtn').addEventListener('click', loadNextTask);
+}
+
+function renderClaimLost() {
+  document.body.classList.add('status-fail');
+  app.innerHTML = `
+    <div class="spacer"></div>
+    <div class="result-icon">⚠️</div>
+    <div class="result-detail">작업 배정 확인이 필요합니다</div>
+    <div class="fail-detail">네트워크 단절 또는 다른 PDA 재배정으로 현재 작업을 중단했습니다.</div>
+    <button class="btn-next" id="retryBtn">작업 다시 받기</button>
     <div class="spacer"></div>`;
   document.getElementById('retryBtn').addEventListener('click', loadNextTask);
 }
@@ -286,7 +301,8 @@ function showFailure(title, detail, returnScreen) {
   render();
 }
 
-function handleFromScan(rawValue) {
+async function handleFromScan(rawValue) {
+  if (!await verifyClaimOwnership()) return;
   if (!isExpectedLocation(rawValue, state.mapping.from_location)) {
     showFailure('FROM 로케이션 불일치', `스캔값: ${rawValue}`, 'FROM');
     return;
@@ -296,7 +312,8 @@ function handleFromScan(rawValue) {
   render();
 }
 
-function handleItemScan(rawValue) {
+async function handleItemScan(rawValue) {
+  if (!await verifyClaimOwnership()) return;
   if (!isExpectedItem(rawValue, state.mapping.item_code)) {
     showFailure('품번 불일치', `스캔값: ${rawValue}`, 'ITEM');
     return;
@@ -307,6 +324,7 @@ function handleItemScan(rawValue) {
 }
 
 async function handleToScan(rawValue) {
+  if (!await verifyClaimOwnership()) return;
   const input = document.getElementById('scanInput');
   if (input) input.disabled = true;
   const targets = pendingTargets(state.mapping, state.completedLocations);
@@ -381,7 +399,39 @@ async function claimNextTask() {
   }));
 }
 
+function blockClaimedTask(reason) {
+  if (claimBlocked) return;
+  claimBlocked = true;
+  console.warn('claim ownership lost:', reason);
+  stopClaimHeartbeat();
+  stopNoWorkPolling();
+  state.screen = 'CLAIM_LOST';
+  render();
+}
+
+async function verifyClaimOwnership() {
+  if (claimBlocked || !state.mapping) return false;
+  const generation = claimGeneration;
+  const mappingId = state.mapping.id;
+  const { data, error } = await withRetry(() => sbFetch('rpc/renew_item_mapping_claim', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_mapping_id: mappingId,
+      p_device_id: deviceId,
+    }),
+  }));
+  if (generation !== claimGeneration || state.mapping?.id !== mappingId) return false;
+  if (claimBlocked) return false;
+  if (error || data !== true) {
+    blockClaimedTask(error?.message ?? 'claim rejected');
+    return false;
+  }
+  return true;
+}
+
 async function loadNextTask() {
+  claimGeneration += 1;
+  claimBlocked = false;
   stopClaimHeartbeat();
   stopNoWorkPolling();
   state = initialState();
@@ -416,17 +466,8 @@ async function loadNextTask() {
 function startClaimHeartbeat() {
   stopClaimHeartbeat();
   claimTimer = setInterval(async () => {
-    if (!state.mapping) return;
-    const { data, error } = await sbFetch('rpc/renew_item_mapping_claim', {
-      method: 'POST',
-      body: JSON.stringify({
-        p_mapping_id: state.mapping.id,
-        p_device_id: deviceId,
-      }),
-    });
-    if (error || data !== true) {
-      console.warn('작업 선점 갱신 실패:', error?.message ?? 'claim lost');
-    }
+    if (!state.mapping || claimBlocked) return;
+    await verifyClaimOwnership();
   }, CLAIM_REFRESH_MS);
 }
 

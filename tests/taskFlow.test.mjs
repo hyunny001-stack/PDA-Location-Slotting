@@ -66,6 +66,11 @@ test('location-first URL은 FROM→품번→TO 이동 전용 흐름을 실행한
   assert.match(locationFirst, /STEP 3 · TO/);
   assert.match(locationFirst, /claim_next_item_mapping/);
   assert.match(locationFirst, /complete_item_mapping/);
+  assert.match(locationFirst, /async function verifyClaimOwnership/);
+  assert.match(locationFirst, /if \(!await verifyClaimOwnership\(\)\) return;/);
+  assert.match(locationFirst, /function blockClaimedTask/);
+  assert.match(locationFirst, /claim ownership lost/);
+  assert.match(locationFirst, /generation !== claimGeneration/);
   assert.doesNotMatch(locationFirst, /재고조사 시작|나의 조사 완료|정규 조사|재조사/);
 });
 

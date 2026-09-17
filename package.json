@@ -4,6 +4,6 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "check": "node --check js/pda.js && node --check js/admin.js && node --check js/taskFlow.js"
+    "check": "node --check js/pda.js && node --check js/modeRouter.js && node --check js/pda-item-first.js && node --check js/pda-location-first.js && node --check js/admin.js && node --check js/taskFlow.js"
   }
 }

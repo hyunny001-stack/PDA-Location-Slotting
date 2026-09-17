@@ -71,6 +71,11 @@ test('location-first URL은 FROM→품번→TO 이동 전용 흐름을 실행한
   assert.match(locationFirst, /function blockClaimedTask/);
   assert.match(locationFirst, /claim ownership lost/);
   assert.match(locationFirst, /generation !== claimGeneration/);
+  assert.match(locationFirst, /async function finalizeCurrentMapping/);
+  assert.match(locationFirst, /case 'FINALIZING'/);
+  assert.match(locationFirst, /case 'FINALIZE_ERROR'/);
+  assert.match(locationFirst, /item_mappings\?select=status&id=eq\.\$\{encodeURIComponent/);
+  assert.match(locationFirst, /pendingTargets\(mapping, state\.completedLocations\)\.length === 0/);
   assert.doesNotMatch(locationFirst, /재고조사 시작|나의 조사 완료|정규 조사|재조사/);
 });
 

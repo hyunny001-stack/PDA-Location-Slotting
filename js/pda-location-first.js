@@ -120,6 +120,8 @@ function render() {
     case 'NO_WORK': renderNoWork(); break;
     case 'SETUP_ERROR': renderSetupError(); break;
     case 'CLAIM_LOST': renderClaimLost(); break;
+    case 'FINALIZING': renderFinalizing(); break;
+    case 'FINALIZE_ERROR': renderFinalizeError(); break;
     case 'FROM': renderFrom(); break;
     case 'ITEM': renderItem(); break;
     case 'TO': renderTo(); break;
@@ -170,6 +172,26 @@ function renderClaimLost() {
     <button class="btn-next" id="retryBtn">작업 다시 받기</button>
     <div class="spacer"></div>`;
   document.getElementById('retryBtn').addEventListener('click', loadNextTask);
+}
+
+function renderFinalizing() {
+  app.innerHTML = `
+    <div class="spacer"></div>
+    <div class="loading-spinner" aria-hidden="true"></div>
+    <div class="result-detail">이동 완료를 저장하고 있습니다</div>
+    <div class="spacer"></div>`;
+}
+
+function renderFinalizeError() {
+  document.body.classList.add('status-fail');
+  app.innerHTML = `
+    <div class="spacer"></div>
+    <div class="result-icon">⚠️</div>
+    <div class="result-detail">완료 저장 재시도가 필요합니다</div>
+    <div class="fail-detail">TO 이동 로그는 저장됐습니다. QR을 다시 스캔하지 말고 완료 저장만 재시도하세요.</div>
+    <button class="btn-next" id="finalizeRetryBtn">완료 저장 재시도</button>
+    <div class="spacer"></div>`;
+  document.getElementById('finalizeRetryBtn').addEventListener('click', finalizeCurrentMapping);
 }
 
 function renderFrom() {
@@ -360,26 +382,11 @@ async function handleToScan(rawValue) {
     return;
   }
 
-  const completion = await withRetry(() => sbFetch('rpc/complete_item_mapping', {
-    method: 'POST',
-    body: JSON.stringify({
-      p_mapping_id: state.mapping.id,
-      p_device_id: deviceId,
-    }),
-  }));
-  if (completion.error || completion.data !== true) {
-    showFailure('완료 저장 실패', '관리자에게 문의하거나 TO QR을 다시 스캔하세요', 'TO');
-    return;
-  }
-
-  stopClaimHeartbeat();
   state.passResult = {
     from: state.mapping.from_location,
     to: state.mapping.to_display,
   };
-  state.screen = 'PASS';
-  render();
-  setTimeout(loadNextTask, NEXT_TASK_DELAY_MS);
+  await finalizeCurrentMapping();
 }
 
 async function loadCompletedLocations(mappingId) {
@@ -429,6 +436,70 @@ async function verifyClaimOwnership() {
   return true;
 }
 
+async function readCurrentMappingStatus() {
+  return withRetry(() => sbFetch(
+    `item_mappings?select=status&id=eq.${encodeURIComponent(state.mapping.id)}&limit=1`,
+  ));
+}
+
+function finishCurrentMapping() {
+  stopClaimHeartbeat();
+  state.passResult ??= {
+    from: state.mapping.from_location,
+    to: state.mapping.to_display,
+  };
+  state.screen = 'PASS';
+  render();
+  setTimeout(loadNextTask, NEXT_TASK_DELAY_MS);
+}
+
+async function finalizeCurrentMapping() {
+  if (!state.mapping || claimBlocked) return;
+  const generation = claimGeneration;
+  const mappingId = state.mapping.id;
+  state.screen = 'FINALIZING';
+  render();
+
+  const current = await readCurrentMappingStatus();
+  if (generation !== claimGeneration || state.mapping?.id !== mappingId) return;
+  if (!current.error && current.data?.[0]?.status === 'completed') {
+    finishCurrentMapping();
+    return;
+  }
+  if (current.error) {
+    state.screen = 'FINALIZE_ERROR';
+    render();
+    return;
+  }
+  if (current.data?.[0]?.status !== 'active') {
+    blockClaimedTask(`mapping status ${current.data?.[0]?.status ?? 'missing'}`);
+    return;
+  }
+  if (!await verifyClaimOwnership()) return;
+
+  const completion = await withRetry(() => sbFetch('rpc/complete_item_mapping', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_mapping_id: mappingId,
+      p_device_id: deviceId,
+    }),
+  }));
+  if (generation !== claimGeneration || state.mapping?.id !== mappingId) return;
+  if (!completion.error && completion.data === true) {
+    finishCurrentMapping();
+    return;
+  }
+
+  const reconciled = await readCurrentMappingStatus();
+  if (generation !== claimGeneration || state.mapping?.id !== mappingId) return;
+  if (!reconciled.error && reconciled.data?.[0]?.status === 'completed') {
+    finishCurrentMapping();
+    return;
+  }
+  state.screen = 'FINALIZE_ERROR';
+  render();
+}
+
 async function loadNextTask() {
   claimGeneration += 1;
   claimBlocked = false;
@@ -458,8 +529,16 @@ async function loadNextTask() {
     render();
     return;
   }
-  state.screen = 'FROM';
   startClaimHeartbeat();
+  if (pendingTargets(mapping, state.completedLocations).length === 0) {
+    state.passResult = {
+      from: mapping.from_location,
+      to: mapping.to_display,
+    };
+    await finalizeCurrentMapping();
+    return;
+  }
+  state.screen = 'FROM';
   render();
 }
 

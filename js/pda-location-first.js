@@ -194,6 +194,10 @@ function renderFinalizeError() {
   document.getElementById('finalizeRetryBtn').addEventListener('click', finalizeCurrentMapping);
 }
 
+function placementIdempotencyKey(mappingId, scannedTo) {
+  return `${mappingId}:PASS:${normalizeLocation(scannedTo)}`;
+}
+
 function renderFrom() {
   const mapping = state.mapping;
   app.innerHTML = `
@@ -356,19 +360,25 @@ async function handleToScan(rawValue) {
     return;
   }
 
-  const logResult = await withRetry(() => sbFetch('placement_logs', {
-    method: 'POST',
-    headers: { Prefer: 'return=minimal' },
-    body: JSON.stringify({
-      mapping_id: state.mapping.id,
-      item_code: state.mapping.item_code,
-      from_location: state.mapping.from_location,
-      scanned_to: target.location,
-      to_display: state.mapping.to_display,
-      result: 'pass',
-      pda_ua: navigator.userAgent,
-    }),
-  }));
+  const logResult = await withRetry(() => sbFetch(
+    'placement_logs?on_conflict=idempotency_key',
+    {
+      method: 'POST',
+      headers: {
+        Prefer: 'resolution=merge-duplicates,return=representation',
+      },
+      body: JSON.stringify({
+        idempotency_key: placementIdempotencyKey(state.mapping.id, target.location),
+        mapping_id: state.mapping.id,
+        item_code: state.mapping.item_code,
+        from_location: state.mapping.from_location,
+        scanned_to: target.location,
+        to_display: state.mapping.to_display,
+        result: 'pass',
+        pda_ua: navigator.userAgent,
+      }),
+    },
+  ));
   if (logResult.error) {
     showFailure('저장 실패', '네트워크를 확인하고 TO QR을 다시 스캔하세요', 'TO');
     return;

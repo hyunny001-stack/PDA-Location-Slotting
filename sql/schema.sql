@@ -34,6 +34,7 @@ CREATE TABLE placement_logs (
   scanned_to    TEXT NOT NULL,
   to_display    TEXT NOT NULL,
   result        TEXT NOT NULL CHECK (result IN ('pass','fail')),
+  idempotency_key TEXT UNIQUE,
   pda_ua        TEXT,
   logged_at     TIMESTAMPTZ DEFAULT NOW()
 );

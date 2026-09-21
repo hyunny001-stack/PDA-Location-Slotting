@@ -44,6 +44,8 @@ let state = {
 
 // ── 현재 스텝 핸들러 ──
 let _stepHandler = null;
+let workGeneration = 0;
+let pendingPlacement = null;
 
 // ──────────────────────────────────────────
 // 전역 스캔 캡처 (포커스 없어도 동작)
@@ -56,6 +58,7 @@ document.addEventListener('touchstart', () => {
 let _gBuf = '';
 let _gTimer = null;
 document.addEventListener('keydown', e => {
+  if (pendingPlacement) return;
   if (document.activeElement?.id === 'scanInput') return;
   if (!_stepHandler) return;
   if (e.ctrlKey || e.altKey || e.metaKey) return;
@@ -313,6 +316,7 @@ function bindScan(handler) {
 }
 
 function submitScan(input, handler) {
+  if (input.disabled || pendingPlacement) return;
   const val = input.value.trim();
   input.value = '';
   if (val) handler(val);
@@ -320,6 +324,10 @@ function submitScan(input, handler) {
 
 // ── 초기화 ──
 function resetToStep1() {
+  workGeneration++;
+  pendingPlacement = null;
+  _gBuf = '';
+  clearTimeout(_gTimer);
   state = {
     screen: 'STEP1',
     currentMapping: null,
@@ -334,6 +342,8 @@ function resetToStep1() {
 
 // ── STEP 1 핸들러 ──
 async function handleStep1Scan(rawValue) {
+  if (pendingPlacement) return;
+  workGeneration++;
   const value = parseItemCode(rawValue);
   const input = document.getElementById('scanInput');
   if (input) {
@@ -395,8 +405,23 @@ function showStep1Error(input, msg) {
   setTimeout(() => banner.classList.remove('visible'), 7000);
 }
 
+// ── 저장 멱등 키 ──
+function placementIdempotencyKey(mappingId, scannedTo) {
+  return `${mappingId}:PASS:${scannedTo.trim().toLowerCase()}`;
+}
+
 // ── TO 로케이션 스캔 핸들러 ──
 async function handleStep3Scan(value) {
+  if (pendingPlacement || !['STEP3', 'STEP3_FAIL'].includes(state.screen)) return;
+  if (!state.currentMapping && !state.allMappings) return;
+  const operation = {
+    generation: workGeneration,
+    currentMapping: state.currentMapping,
+    allMappings: state.allMappings,
+  };
+  pendingPlacement = operation;
+  _gBuf = '';
+  clearTimeout(_gTimer);
   const input = document.getElementById('scanInput');
   if (input) input.disabled = true;
 
@@ -417,22 +442,42 @@ async function handleStep3Scan(value) {
   const isDuplicate     = state.completedLocations.has(value.toLowerCase());
   const isPass          = isValidLocation && !isDuplicate;
 
-  // 로그 저장 (fire-and-forget)
-  sbFetch('placement_logs', {
-    method: 'POST',
-    headers: { 'Prefer': 'return=minimal' },
-    body: JSON.stringify({
-      mapping_id:    mapping.id,
-      item_code:     mapping.item_code,
-      from_location: mapping.from_location,
-      scanned_to:    value,
-      to_display:    mapping.to_display,
-      result:        isPass ? 'pass' : 'fail',
-      pda_ua:        navigator.userAgent,
-    }),
-  }).then(({ error }) => {
-    if (error) console.warn('로그 저장 실패:', error.message);
-  });
+  const logResult = await withRetry(() => sbFetch(
+    'placement_logs?on_conflict=idempotency_key',
+    {
+      method: 'POST',
+      headers: {
+        Prefer: 'resolution=merge-duplicates,return=representation',
+      },
+      body: JSON.stringify({
+        idempotency_key: isPass
+          ? placementIdempotencyKey(mapping.id, value)
+          : null,
+        mapping_id: mapping.id,
+        item_code: mapping.item_code,
+        from_location: mapping.from_location,
+        scanned_to: value,
+        to_display: mapping.to_display,
+        result: isPass ? 'pass' : 'fail',
+        pda_ua: navigator.userAgent,
+      }),
+    },
+  ));
+
+  // Reset/new work owns its own pending token; old ACK/error must not touch it.
+  if (pendingPlacement !== operation || workGeneration !== operation.generation ||
+      state.currentMapping !== operation.currentMapping || state.allMappings !== operation.allMappings) return;
+  pendingPlacement = null;
+
+  if (isPass && logResult.error) {
+    playFailFeedback();
+    state.step3FailScan = value;
+    state.failReason = 'wrong';
+    state.screen = 'STEP3_FAIL';
+    render();
+    return;
+  }
+  if (logResult.error) console.warn('로그 저장 실패:', logResult.error.message);
 
   if (isPass) {
     playPassFeedback();

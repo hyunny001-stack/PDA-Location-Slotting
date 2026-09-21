@@ -41,7 +41,7 @@ test('기본 URL은 최초설계 품번우선 이동만 실행한다', async () 
   ]);
 
   assert.match(loader, /selectPdaModule\(window\.location\.search\)/);
-  assert.match(loader, /import\(`\.\/\$\{moduleName\}\?v=20260917a`\)/);
+  assert.match(loader, /import\(`\.\/\$\{moduleName\}\?v=20260921b`\)/);
   assert.match(itemFirst, /screen:\s*'STEP1'/);
   assert.match(itemFirst, /품번 QR을/);
   assert.match(itemFirst, /item_code=ilike\.\$\{enc\}&status=eq\.active/);
@@ -106,9 +106,24 @@ test('두 모드는 별도 파일로 격리하고 알려지지 않은 mode는 �
   assert.doesNotMatch(router, /guided|cycle-count|PdaFoundationClient/);
 });
 
+test('두 모드는 성공 로그 저장을 기다리고 멱등 upsert 재시도를 사용한다', async () => {
+  const [itemFirst, locationFirst] = await Promise.all([
+    source('../js/pda-item-first.js'),
+    source('../js/pda-location-first.js'),
+  ]);
+
+  for (const sourceText of [itemFirst, locationFirst]) {
+    assert.match(sourceText, /placement_logs\?on_conflict=idempotency_key/);
+    assert.match(sourceText, /resolution=merge-duplicates,return=representation/);
+    assert.match(sourceText, /idempotency_key/);
+  }
+  assert.match(itemFirst, /if \(isPass && logResult\.error\)/);
+  assert.match(locationFirst, /if \(logResult\.error\) \{/);
+});
+
 test('분리된 PDA 모듈 캐시 버전을 배포한다', async () => {
   const html = await source('../index.html');
 
-  assert.match(html, /js\/pda\.js\?v=20260917a/);
+  assert.match(html, /js\/pda\.js\?v=20260921b/);
   assert.doesNotMatch(html, /mode=item-first|mode=guided/);
 });

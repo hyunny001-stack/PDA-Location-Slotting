@@ -395,6 +395,11 @@ function showStep1Error(input, msg) {
   setTimeout(() => banner.classList.remove('visible'), 7000);
 }
 
+// ── 저장 멱등 키 ──
+function placementIdempotencyKey(mappingId, scannedTo) {
+  return `${mappingId}:PASS:${scannedTo.trim().toLowerCase()}`;
+}
+
 // ── TO 로케이션 스캔 핸들러 ──
 async function handleStep3Scan(value) {
   const input = document.getElementById('scanInput');
@@ -417,22 +422,37 @@ async function handleStep3Scan(value) {
   const isDuplicate     = state.completedLocations.has(value.toLowerCase());
   const isPass          = isValidLocation && !isDuplicate;
 
-  // 로그 저장 (fire-and-forget)
-  sbFetch('placement_logs', {
-    method: 'POST',
-    headers: { 'Prefer': 'return=minimal' },
-    body: JSON.stringify({
-      mapping_id:    mapping.id,
-      item_code:     mapping.item_code,
-      from_location: mapping.from_location,
-      scanned_to:    value,
-      to_display:    mapping.to_display,
-      result:        isPass ? 'pass' : 'fail',
-      pda_ua:        navigator.userAgent,
-    }),
-  }).then(({ error }) => {
-    if (error) console.warn('로그 저장 실패:', error.message);
-  });
+  const logResult = await withRetry(() => sbFetch(
+    'placement_logs?on_conflict=idempotency_key',
+    {
+      method: 'POST',
+      headers: {
+        Prefer: 'resolution=merge-duplicates,return=representation',
+      },
+      body: JSON.stringify({
+        idempotency_key: isPass
+          ? placementIdempotencyKey(mapping.id, value)
+          : null,
+        mapping_id: mapping.id,
+        item_code: mapping.item_code,
+        from_location: mapping.from_location,
+        scanned_to: value,
+        to_display: mapping.to_display,
+        result: isPass ? 'pass' : 'fail',
+        pda_ua: navigator.userAgent,
+      }),
+    },
+  ));
+
+  if (isPass && logResult.error) {
+    playFailFeedback();
+    state.step3FailScan = value;
+    state.failReason = 'wrong';
+    state.screen = 'STEP3_FAIL';
+    render();
+    return;
+  }
+  if (logResult.error) console.warn('로그 저장 실패:', logResult.error.message);
 
   if (isPass) {
     playPassFeedback();

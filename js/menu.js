@@ -1,24 +1,15 @@
 import { CONFIG } from './config.js';
 
-// Start screen for the worker: survey → move → putaway. Jobs come from the slotting app
-// (prototype-server "PDA로 작업 등록"); its putaway jobs use "입고" as the FROM location.
-export const INBOUND_FROM = '입고';
-
-export function summarizeJobs(rows) {
-  let moves = 0;
-  let putaway = 0;
-  for (const row of rows ?? []) {
-    if (String(row.from_location ?? '').trim() === INBOUND_FROM) putaway += 1;
-    else moves += 1;
-  }
-  return { moves, putaway };
+// Start screen for the worker: empty-location survey, then location moves. Move jobs come from the
+// slotting app (prototype-server "PDA로 작업 등록"). Putaway itself is done in WMS with its own PDA flow.
+export function countActiveJobs(rows) {
+  return Array.isArray(rows) ? rows.length : 0;
 }
 
 export function menuLinks(config = CONFIG) {
   return [
     { id: 'survey', label: '공로케이션 조사', hint: '빈 로케이션 확인', href: config.SURVEY_URL },
     { id: 'move', label: '로케이션 이동', hint: '자리 비우기 · 잔존재고 이동', href: 'index.html?mode=location-first' },
-    { id: 'putaway', label: '입고 적치', hint: '품번 QR 스캔 후 적치', href: 'index.html' },
   ];
 }
 
@@ -31,7 +22,7 @@ async function loadActiveJobs() {
       signal: controller.signal,
     });
     if (!response.ok) return null;
-    return summarizeJobs(await response.json());
+    return countActiveJobs(await response.json());
   } catch {
     return null;
   } finally {
@@ -43,11 +34,11 @@ function esc(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
 
-function render(counts) {
+function render(left) {
   const countText = (id) => {
-    if (id === 'survey') return '';
-    if (!counts) return '<span class="menu-count">남은 작업 확인 중…</span>';
-    const left = id === 'move' ? counts.moves : counts.putaway;
+    if (id !== 'move') return '';
+    if (left === null) return '<span class="menu-count">남은 작업 확인 중…</span>';
+    if (left === undefined) return '<span class="menu-count">남은 작업을 불러오지 못했습니다</span>';
     return `<span class="menu-count">${left > 0 ? `남은 작업 ${left}건` : '남은 작업 없음'}</span>`;
   };
   document.getElementById('app').innerHTML = `
@@ -68,8 +59,7 @@ function render(counts) {
 
 async function start() {
   render(null);
-  const counts = await loadActiveJobs();
-  render(counts ?? { moves: '?', putaway: '?' });
+  render((await loadActiveJobs()) ?? undefined);
 }
 
 if (typeof document !== 'undefined') start();

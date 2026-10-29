@@ -22,10 +22,10 @@
 |----|------|------|
 | ① 공로케이션 조사 | `CONFIG.SURVEY_URL` (dio-empty-location-check `/pda`) | 별도 앱 |
 | ② 로케이션 이동 | `index.html?mode=location-first` | 자리 비우기 · 잔존재고 이동 |
-| ③ 입고 적치 | `index.html` (품번 우선, 기본) | FROM이 `입고`인 작업 |
 
-- 이동·적치 작업은 슬로팅 앱(prototype-server)의 "PDA로 작업 등록"이 `item_mappings`에 바로 넣는다 (관리자 화면 업로드와 같은 upsert). 적치 작업의 FROM은 `입고`.
-- 메뉴의 "남은 작업"은 active 작업을 FROM이 `입고`면 적치, 나머지는 이동으로 센다. 단계 사이의 "끝난 거 확인"에 쓴다.
+- 입고 적치는 WMS의 PDA 연동으로 한다. 이 앱은 로케이션 이동만 맡는다.
+- 이동 작업은 슬로팅 앱(prototype-server)의 "PDA로 작업 등록"이 `item_mappings`에 바로 넣는다 (관리자 화면 업로드와 같은 upsert).
+- 메뉴의 "남은 작업"은 active 작업 수다. 이동이 끝났는지 확인하는 데 쓴다.
 - 두 스캔 모드 화면 오른쪽 위 `메뉴` 링크로 돌아온다. 기본 URL(`index.html`)의 품번 우선 동작은 바뀌지 않았다.
 
 ---

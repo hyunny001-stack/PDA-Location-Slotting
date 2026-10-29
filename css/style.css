@@ -346,3 +346,59 @@ body.status-fail { background: #ef4444; }
   opacity: 0.85;
   padding: 4px 2px;
 }
+
+/* ── 작업 메뉴 (menu.html) ── */
+.menu-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.menu-btn {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  grid-template-rows: auto auto auto;
+  column-gap: 14px;
+  align-items: center;
+  min-height: 96px;
+  padding: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.8);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.12);
+  color: white;
+  text-decoration: none;
+  touch-action: manipulation;
+}
+
+.menu-step {
+  grid-row: 1 / span 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: white;
+  color: #1e40af;
+  font-size: 24px;
+  font-weight: bold;
+}
+
+.menu-label { font-size: 26px; font-weight: bold; }
+.menu-hint { font-size: 16px; opacity: 0.85; }
+.menu-count { font-size: 18px; font-weight: bold; color: #fbbf24; }
+
+.menu-link {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  padding: 8px 14px;
+  border: 2px solid rgba(255, 255, 255, 0.8);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  color: white;
+  font-size: 16px;
+  font-weight: bold;
+  text-decoration: none;
+  z-index: 10;
+}
